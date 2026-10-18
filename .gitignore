@@ -48,6 +48,8 @@ coverage/
 *.ckpt
 *.safetensors
 *.h5
+*.task
+*.tflite
 
 # Machine-specific state (keep project instructions and shared config)
 .codex/auth.json
