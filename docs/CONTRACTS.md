@@ -69,7 +69,7 @@ Schema 检查类型、必填、版本、枚举、单位和额外字段；Python 
 
 ## 在另一台电脑复现
 
-本次在 Windows x64 / Python 3.12.14 上通过。下面只安装契约校验依赖；完整应用环境属于 T03，第二台机器尚未实测。项目目录内运行，Python 3.12 需在该机可用：
+契约校验已在设备 A/B 的 Windows x64 / Python 3.12 上运行通过。下面只安装契约校验依赖；完整工程环境的双机结果见 [ENGINEERING.md](ENGINEERING.md) 和 [设备 A 记录](verification/T03_DEVICE_A.md)。项目目录内运行，Python 3.12 需在该机可用：
 
 ```powershell
 git pull --ff-only origin main
