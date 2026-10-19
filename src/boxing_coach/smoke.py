@@ -12,6 +12,7 @@ from .model_assets import AssetError, find_project_root, load_manifest, select_a
 
 
 EXPECTED_DISTRIBUTIONS = {
+    "av": "19.0.1",
     "jsonschema": "4.26.0",
     "mediapipe": "1.1.1",
     "numpy": "2.5.4",

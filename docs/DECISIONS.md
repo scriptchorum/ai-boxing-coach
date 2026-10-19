@@ -19,6 +19,7 @@
 | D013 | 2026-10-18 | 用户已说明 | 用户正在录制起步视频；本轮未接收或核验，G0 的真实素材条件仍待满足 |
 | D014 | 2026-10-19 | T03 实现 | Windows x64 工程基线固定为 CPython 3.12 和 `requirements.lock`；设备 B 实测为 Python 3.12.10、MediaPipe 1.1.1、OpenCV contrib 5.0.0.93、NumPy 2.5.4、Streamlit 1.66.0。Pose Landmarker Lite 用固定对象 generation、大小和 SHA-256 追踪，权重不进 Git；Python 3.14 与 FFmpeg/FFprobe 尚未列入已验证支持，后者留待 T04。T03 仍需设备 A 独立复现。 |
 | D015 | 2026-10-19 | T03 验收 | 设备 A 以 Python 3.12.14 / pip 26.2.1 在新环境独立复现，48 个锁定依赖一致，25 项测试、模型加载与界面检查通过；D014 的设备 A 待验证条件已满足，T03 标 Done。见 verification/T03_DEVICE_A.md。当前仍无真实视频分析效果。 |
+| D016 | 2026-10-19 | T04 实现 | 视频时间轴使用 PyAV 19.0.1 提供的 FFmpeg 解码帧 PTS/time base，不用 OpenCV 的帧号/fps 代替时钟；Windows wheel 自带 FFmpeg 库，当前不要求另装系统 `ffmpeg.exe`/`ffprobe.exe`。设备 B 合成测试通过，真实 H.264/HEVC 手机格式与画面对照仍待素材，T04 保持 Doing。 |
 
 本次执行基线是为把策划书变成可实施方案而提出的工程选择，尚未完成技术实验；它们可根据第一阶段结果修订，不应写成用户逐项确认的事实。
 

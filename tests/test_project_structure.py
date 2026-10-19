@@ -56,6 +56,7 @@ class ProjectStructureTests(unittest.TestCase):
     def test_lock_contains_verified_runtime(self) -> None:
         lock = (ROOT / "requirements.lock").read_text(encoding="utf-8")
         for requirement in (
+            "av==19.0.1",
             "mediapipe==1.1.1",
             "numpy==2.5.4",
             "opencv-contrib-python==5.0.0.93",

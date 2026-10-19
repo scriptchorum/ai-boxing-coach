@@ -9,6 +9,7 @@ description = "Local-first engineering skeleton for a women-centered boxing vide
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+  "av==19.0.1",
   "jsonschema==4.26.0",
   "mediapipe==1.1.1",
   "streamlit==1.66.0",
@@ -17,6 +18,7 @@ dependencies = [
 [project.scripts]
 boxing-coach-smoke = "boxing_coach.smoke:main"
 boxing-coach-models = "boxing_coach.model_assets:main"
+boxing-coach-video = "boxing_coach.video_io:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

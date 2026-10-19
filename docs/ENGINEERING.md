@@ -9,13 +9,13 @@
 - Windows x64。
 - CPython 3.12.10；项目明确限制 `>=3.12,<3.13`，尚未把本机已有的 Python 3.14 写成支持版本。
 - pip 26.2.1。
-- MediaPipe 1.1.1、OpenCV contrib 5.0.0.93、NumPy 2.5.4、Streamlit 1.66.0。
+- MediaPipe 1.1.1、OpenCV contrib 5.0.0.93、NumPy 2.5.4、Streamlit 1.66.0；T04 在同一锁文件追加 PyAV 19.0.1。
 - 契约依赖沿用 `requirements-contracts.txt`，完整解析环境固定在 `requirements.lock`。
 - MediaPipe Pose Landmarker Lite 固定到 Google Cloud Storage generation `1682624738331272`，大小与 SHA-256 见 `configs/model-assets.json`。
 
 设备 A 已于 2026-10-19 用 CPython 3.12.14 / pip 26.2.1 在新环境独立复现；48 个锁定依赖逐项一致。详见 [设备 A 验收记录](verification/T03_DEVICE_A.md)。T03 已完成；支持范围仍限本页实际验证的 Windows x64 / Python 3.12。
 
-MediaPipe 依赖 `opencv-contrib-python`，因此不要再安装 `opencv-python` 或 `opencv-python-headless`；这些发行包共享 `cv2` 命名空间。FFmpeg/FFprobe 在本机尚未安装，具体可执行文件版本和视频格式支持由 T04 实测后锁定，不能把 T03 的 Python 导入成功写成视频解码完成。
+MediaPipe 依赖 `opencv-contrib-python`，因此不要再安装 `opencv-python` 或 `opencv-python-headless`；这些发行包共享 `cv2` 命名空间。本机没有系统级 FFmpeg/FFprobe；T04 使用 PyAV Windows wheel 随附的 FFmpeg 库读取解码 PTS，不要求另装可执行文件。真实手机编码范围仍须按 [T04 视频输入说明](VIDEO_IO.md) 实测，不能把合成视频通过写成手机格式已兼容。
 
 ## Windows 安装
 

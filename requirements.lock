@@ -1,10 +1,11 @@
-# T03 resolved environment lock.
+# T03 resolved environment lock, extended with the T04 media runtime.
 # Verified on Windows x64 / CPython 3.12.10 / pip 26.2.1 on 2026-10-19.
 # Install this file before installing the local project with --no-deps.
 absl-py==2.5.1
 altair==6.3.0
 anyio==4.15.1
 attrs==26.1.0
+av==19.0.1
 certifi==2026.10.18
 cffi==2.1.1
 charset-normalizer==3.5.2

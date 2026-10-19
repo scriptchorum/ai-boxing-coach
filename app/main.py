@@ -15,16 +15,16 @@ FIXTURE = ROOT / "tests" / "fixtures" / "complete.synthetic.json"
 st.set_page_config(page_title="女性搏击视频复盘工具", page_icon="🥊", layout="wide")
 st.title("女性搏击视频复盘工具")
 st.warning(
-    "当前仅为 T03 工程骨架：没有视频导入、姿态分析、动作判错、拳力或伤病判断。"
+    "当前页面仍是工程外壳：T04 已有本地视频探测核心，但本页不导入视频，也没有姿态分析、动作判错、拳力或伤病判断。"
 )
 st.write(
-    "本页面只展示合成契约入口和本地运行环境，用于验证两台电脑能够复现同一工程。"
+    "本页面只展示合成契约入口和本地运行环境；视频探测暂通过 boxing-coach-video 本地命令运行。"
 )
 
 left, right = st.columns(2)
 with left:
     st.subheader("已锁定的本地组件")
-    for package in ("mediapipe", "opencv-contrib-python", "numpy", "streamlit"):
+    for package in ("av", "mediapipe", "opencv-contrib-python", "numpy", "streamlit"):
         st.code(f"{package}=={importlib.metadata.version(package)}")
 
 with right:

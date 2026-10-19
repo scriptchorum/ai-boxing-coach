@@ -1,6 +1,6 @@
 # 数据契约与观察指标 v0.1.0
 
-日期：2026-10-18。T01 交付。范围：成年女性为主要设计与验证对象的单人后手直拳离线观察。没有专业教练复核；所有数值只描述视频中的事件。本版没有视频解码、姿态模型或动作识别实现。
+日期：2026-10-18。T01 交付；T04 的视频输入实现见 [VIDEO_IO.md](VIDEO_IO.md)。范围：成年女性为主要设计与验证对象的单人后手直拳离线观察。没有专业教练复核；所有数值只描述视频中的事件。当前已有合成媒体解码与 PTS 接口，没有姿态模型管线或动作识别实现。
 
 ## 规范文件与入口
 
@@ -18,7 +18,7 @@
 | 对象 | 主要字段 | 语义 |
 | --- | --- | --- |
 | VideoManifest | sample_id、participant_id、session_id、lineage_id | 不含姓名的内部代号；lineage_id 把裁剪、镜像、转码等衍生片关联到原始采集 |
-| VideoManifest | input_sha256、duration_ms、media | 输入文件哈希；时长毫秒；编码、旋转后直立画面的宽高像素、原始解码帧总数、旋转角度、原始首帧 PTS、可空的名义 fps |
+| VideoManifest | input_sha256、duration_ms、media | 输入文件哈希；时长毫秒；编码、显示变换后直立画面的宽高像素、原始解码帧总数、逆时针应用的旋转角度、原始首帧 PTS、可空的名义 fps |
 | VideoManifest | capture | 手动选择 stance=orthodox/southpaw/unknown、is_mirrored、view=side/front_45/unsupported/unknown；两个候选机位仍待真实比较 |
 | VideoManifest | split、consent | development/holdout/unassigned；授权状态及本机授权记录代号，不嵌入授权表或联系人 |
 | PoseSequence | model、config | 模型 ID、版本、资产 SHA-256；点位布局、坐标空间、配置版本、缺失与可见性阈值 |
