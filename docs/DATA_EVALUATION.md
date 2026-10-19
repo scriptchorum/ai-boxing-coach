@@ -1,6 +1,6 @@
 # 女性主样本数据与验收规范
 
-状态：拟执行的验证协议 v0.1；没有采集或评估结果。所有门槛是项目初始提案，须在开发集上校准并冻结，不能解释为临床或执教标准。
+状态：T01 冻结的验证协议 v0.1；没有真实采集或评估结果。所有验收门槛是项目初始提案，不能解释为临床或执教标准。模型与规则阈值须在开发集上校准并在独立测试前冻结；验收门槛变更须记录新版本，不能为通过测试而事后修改。当前证据见 [GATES.md](GATES.md)。
 
 ## 女性身体为主要设计对象
 
@@ -61,7 +61,7 @@ WorldLandmarks 的髋中心是随人体移动的参考原点，不是固定场�
 
 ## 最小数据契约
 
-以下是 T01 要落实的接口规格，不代表已经有可运行 schema。真实逐人记录保存在本机 data 下；Git 只保存 schema 和合成示例。
+T01 已将前四类接口落实为 [正式契约](CONTRACTS.md) 和 [可运行 schema](../schemas/contracts.schema.json)，配有结构与语义校验。下面是概要；完整字段与命名以该版本 schema 为准。ReviewAnnotation 在 T08 落实。真实逐人记录保存在本机 data 下；Git 只保存 schema 和合成示例。
 
 - VideoManifest：sample_id、匿名 participant_id、session_id、文件 SHA-256、时长、编码、宽高、PTS 来源、站架、镜像、人工机位、数据分区、授权状态引用；不存真实姓名或联系人。
 - PoseSequence：schema_version、sample_id、model_id 与哈希、运行配置、原始帧号、timestamp_ms、归一化坐标、可选估计 world 坐标、visibility、presence、缺失与插值标记。

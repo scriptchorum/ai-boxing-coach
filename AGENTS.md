@@ -6,7 +6,7 @@
 - GitHub：https://github.com/scriptchorum/ai-boxing-coach.git，Private；共享分支 main。
 - 女性身体为主要设计和验证对象，这是用户明确要求，不能降为附加筛选项或通用产品的宣传标签。
 - 用户每周约 20 小时，目前只有用户与 Codex，没有兼职教练。
-- 当前只有文档和规划；没有应用代码或实测效果。不要虚构已实现功能、教练背书或测试分数。
+- 当前已完成 T01 文档、数据契约和合成校验工具；没有视频分析应用或真实样本实测效果。不要虚构已实现功能、教练背书或测试分数。
 - 用中文沟通。先读 README.md、docs/HANDOFF.md、docs/DECISIONS.md，再读当前任务相关文档。
 - 下一任务从 docs/BACKLOG.md 选取，不自动实现整份策划书。
 
