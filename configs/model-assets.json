@@ -1,0 +1,18 @@
+{
+  "schema_version": "1.0.0",
+  "default_asset_id": "mediapipe_pose_landmarker_lite_float16",
+  "assets": [
+    {
+      "asset_id": "mediapipe_pose_landmarker_lite_float16",
+      "filename": "pose_landmarker_lite.task",
+      "source": "Google MediaPipe Pose Landmarker",
+      "source_generation": "1682624738331272",
+      "url": "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task?generation=1682624738331272",
+      "documentation_url": "https://developers.google.com/edge/mediapipe/solutions/vision/pose_landmarker/index#models",
+      "sha256": "59929e1d1ee95287735ddd833b19cf4ac46d29bc7afddbbf6753c459690d574a",
+      "size_bytes": 5777746,
+      "tracked_in_git": false,
+      "purpose": "T03 CPU smoke test and the initial T05 benchmark candidate; not a validated boxing-analysis model."
+    }
+  ]
+}

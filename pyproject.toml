@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools==84.0.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-boxing-coach"
+version = "0.1.0"
+description = "Local-first engineering skeleton for a women-centered boxing video review tool."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "jsonschema==4.26.0",
+  "mediapipe==1.1.1",
+  "streamlit==1.66.0",
+]
+
+[project.scripts]
+boxing-coach-smoke = "boxing_coach.smoke:main"
+boxing-coach-models = "boxing_coach.model_assets:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+boxing_coach = ["py.typed"]
