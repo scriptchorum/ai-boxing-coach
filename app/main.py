@@ -1,45 +1,81 @@
-"""Engineering-only Streamlit shell; no video analysis is implemented yet."""
+"""Local video review entry; no pose or action analysis."""
 
 from __future__ import annotations
 
-import importlib.metadata
-import json
-from pathlib import Path
-
 import streamlit as st
+from boxing_coach.preview import load_preview, read_preview_frame, selection_times
+from boxing_coach.video_io import MediaInputError
 
 
-ROOT = Path(__file__).resolve().parents[1]
-FIXTURE = ROOT / "tests" / "fixtures" / "complete.synthetic.json"
+def clear_video() -> None:
+    for key in ("video", "frame_index", "start_frame", "end_frame", "mirror"):
+        st.session_state.pop(key, None)
+
+
+def move_frame(delta: int) -> None:
+    video = st.session_state.video
+    st.session_state.frame_index = max(0, min(video.inspection.frame_count - 1, st.session_state.frame_index + delta))
 
 st.set_page_config(page_title="女性搏击视频复盘工具", page_icon="🥊", layout="wide")
 st.title("女性搏击视频复盘工具")
-st.warning(
-    "当前页面仍是工程外壳：T04 已有本地视频探测核心，但本页不导入视频，也没有姿态分析、动作判错、拳力或伤病判断。"
-)
-st.write(
-    "本页面只展示合成契约入口和本地运行环境；视频探测暂通过 boxing-coach-video 本地命令运行。"
-)
+st.caption("以女性身体多样性为核心 · 本地自用预览版")
+st.info("现在可以看视频、核对逐帧时间、选择训练区间。尚未识别人体或分析动作，不提供评分、拳力或伤病判断。")
+st.write("视频仅在这台电脑读取和显示，不上传云端，也不修改原片。请在文件资源管理器中复制视频路径，粘贴到下方。")
+with st.form("open_video"):
+    path = st.text_input("本机 MP4 视频路径", placeholder='粘贴完整文件路径，可带双引号', key="input_path")
+    submitted = st.form_submit_button("打开视频")
+if submitted:
+    clear_video()
+    try:
+        with st.spinner("检查完整视频与时间轴…"):
+            st.session_state.video = load_preview(path)
+    except MediaInputError as exc:
+        st.error(f"无法打开视频 [{exc.code}]：{exc}")
+    except (ValueError, OSError):
+        st.error("路径无法读取，请重新复制文件路径。")
+
+video = st.session_state.get("video")
+if video is None:
+    st.caption("首版范围：无旋转/反射元数据的 H.264 / MP4、8-bit yuv420p；单片最多 120 秒、512 MiB。推荐固定机位、全身留边、背景无人。")
+    st.stop()
+
+inspection = video.inspection
+last = inspection.frame_count - 1
+st.button("关闭当前视频", on_click=clear_video)
+st.success(f"已打开：{video.path.name}")
+st.caption(f"{inspection.width} × {inspection.height} · {inspection.duration_ms / 1000:.2f} 秒 · {inspection.frame_count} 帧 · 使用原始视频时间戳")
+mirror = st.checkbox("拍摄时开启了镜像保存：纠正右侧逐帧画面", value=False, key="mirror")
+st.caption("未开启镜像保存时保持不勾选。不确定时先保留原画面；这里不会自动猜测左右手。")
+st.number_input("查看帧号（从 0 开始）", min_value=0, max_value=last, step=1, key="frame_index")
+prev, nxt = st.columns(2)
+prev.button("上一帧", on_click=move_frame, args=(-1,), disabled=st.session_state.frame_index == 0)
+nxt.button("下一帧", on_click=move_frame, args=(1,), disabled=st.session_state.frame_index == last)
+
+try:
+    with st.spinner("定位源帧…"):
+        frame = read_preview_frame(video, int(st.session_state.frame_index), correct_mirror=mirror)
+except MediaInputError as exc:
+    clear_video()
+    st.error(f"视频已失效 [{exc.code}]，请重新打开。")
+    st.stop()
 
 left, right = st.columns(2)
 with left:
-    st.subheader("已锁定的本地组件")
-    for package in ("av", "mediapipe", "opencv-contrib-python", "numpy", "streamlit"):
-        st.code(f"{package}=={importlib.metadata.version(package)}")
-
+    st.subheader("原片播放")
+    st.video(video.content, format="video/mp4")
+    st.caption("保留拍摄画面和原始音轨。播放器用于观看，不与右侧帧号自动联动；精确时间以右侧为准。")
 with right:
-    st.subheader("合成样例摘要")
-    bundle = json.loads(FIXTURE.read_text(encoding="utf-8"))
-    st.json(
-        {
-            "synthetic": bundle["synthetic"],
-            "sample_id": bundle["manifest"]["sample_id"],
-            "candidate_count": bundle["report"]["candidate_count"],
-            "valid_count": bundle["report"]["valid_count"],
-            "report_status": bundle["report"]["status"],
-        }
-    )
+    st.subheader("逐帧核对")
+    st.image(frame.image_rgb, caption=f"源帧 {frame.source_frame_index} · {frame.timestamp_ms / 1000:.6f} 秒" + (" · 已纠正镜像" if mirror else " · 保留原画面"), width="stretch")
 
-st.info(
-    "合成样例通过只证明数据契约与工程入口可运行，不代表真实女性样本、视觉效果或专业反馈已经验证。"
-)
+st.subheader("选择稳定的训练区间")
+st.write("避开拿取手机、出框和遮挡；这只是手动选择，不代表系统判断动作合格。")
+start_col, end_col = st.columns(2)
+start = start_col.number_input("起始帧（包含）", min_value=0, max_value=last, value=0, step=1, key="start_frame")
+end = end_col.number_input("结束帧（包含）", min_value=0, max_value=last, value=last, step=1, key="end_frame")
+try:
+    begin_ms, stop_ms = selection_times(inspection, int(start), int(end))
+    st.write(f"选中 {int(end) - int(start) + 1} 帧；区间 {begin_ms / 1000:.6f}–{stop_ms / 1000:.6f} 秒（结束时间不包含），共 {(stop_ms - begin_ms) / 1000:.3f} 秒。")
+except ValueError as exc:
+    st.error(str(exc))
+st.caption("本次选择仅保留在当前会话，关闭或刷新后需重新选择；不会裁剪、覆盖原片或保存训练历史。")

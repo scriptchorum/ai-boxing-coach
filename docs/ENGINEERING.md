@@ -70,10 +70,10 @@ $env:MPLCONFIGDIR=(Resolve-Path work/matplotlib-cache).Path
 工程界面外壳可用以下命令启动：
 
 ```powershell
-.\.venv\Scripts\python.exe -m streamlit run app/main.py
+.\.venv\Scripts\python.exe -m streamlit run app/main.py --server.address=127.0.0.1 --browser.gatherUsageStats=false
 ```
 
-页面只显示环境与合成样例摘要，不接受真实视频，不提供动作判断。
+页面已在 T04 接入受限 H.264/MP4 本地预览、PTS 帧定位和临时区间选择；不提供人体识别或动作判断。也可运行 `./start-preview.ps1` 自动选用已安装依赖的本地环境；完整使用说明见 [本地预览](LOCAL_PREVIEW.md)。
 
 ## 双机验收状态
 
