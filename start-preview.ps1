@@ -1,6 +1,10 @@
 param([string]$PythonPath = "", [int]$Port = 8501)
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
+if (-not $env:MPLCONFIGDIR) {
+    $env:MPLCONFIGDIR = Join-Path $PSScriptRoot 'work/matplotlib-cache'
+    New-Item -ItemType Directory -Path $env:MPLCONFIGDIR -Force | Out-Null
+}
 if (-not $PythonPath) {
     $candidates = @('.venv/Scripts/python.exe', 'work/t03-device-a/.venv/Scripts/python.exe')
     foreach ($candidate in $candidates) {
