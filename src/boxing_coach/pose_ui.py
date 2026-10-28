@@ -5,6 +5,7 @@ from .model_assets import AssetError
 from .pose import JOINTS, PoseError, draw_pose, drawable, extract_pose, run_key
 from .preview import read_preview_frame
 from .video_io import MediaInputError
+from .synced_player import render_synced_player
 
 
 def clear_pose():
@@ -44,6 +45,18 @@ def render_pose_panel(video,start,end,mirror):
     if cached is None:
         return
     st.button('清除本次关键点结果',on_click=clear_pose)
+    st.subheader('播放并查看骨架')
+    st.write('点击下面左侧视频的 ▶ 播放，右侧骨架随画面变化；暂停或拖动也可核对。仅识别过的区间显示骨架。')
+    try:
+        read_preview_frame(video,start,correct_mirror=mirror)
+        render_synced_player(video,mirror,cached)
+    except ValueError as exc:
+        st.warning(str(exc))
+    except (MediaInputError,OSError):
+        clear_pose()
+        st.error('源视频已失效，请重新打开并识别。')
+        return
+    st.caption('更精确地检查某一帧，可继续使用下方“骨架核对源帧号”。')
     summary = cached.summary()
     st.write(f"已处理 {summary['frames']} 帧，耗时 {summary['elapsed_seconds']:.1f} 秒。单个模型候选 {summary['single_model_pose']} 帧；未检出 {summary['no_pose']} 帧；多个候选 {summary['multiple_poses']} 帧。")
     st.caption('只检出一个候选不证明画面中只有一人，模型也可能跟到背景人物；本版不识别身份、不跨帧确认同一人。请目视核对，勿将背景人物骨架当作训练者。')

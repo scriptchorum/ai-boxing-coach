@@ -112,6 +112,24 @@ class PoseTests(unittest.TestCase):
         self.assertFalse(any(n.key=='pose_index' for n in app.number_input))
         self.assertEqual(len(app.exception),0)
 
+    def test_player_payload_uses_source_pts_and_only_drawable_points(self):
+        import struct
+        from dataclasses import replace
+        from boxing_coach.synced_player import player_payload
+        run=fixture_run(self.video)
+        run.frames[0]['landmarks'][15]['visibility']=0.1
+        payload=player_payload(self.video,False,run)
+        length=struct.unpack('<I',payload[1:5])[0]
+        data=json.loads(payload[5:5+length])
+        self.assertEqual(payload[0],2)
+        self.assertEqual(payload[5+length:],self.video.content)
+        self.assertEqual([f['time'] for f in data['frames']],[0,.033,.120])
+        self.assertNotIn('15',data['frames'][0]['points'])
+        self.assertNotIn('0',data['frames'][0]['points'])
+        with self.assertRaises(ValueError): player_payload(self.video,True,run)
+        shifted=replace(self.video,inspection=replace(self.video.inspection,original_pts_start_ms=100))
+        with self.assertRaises(ValueError): player_payload(shifted,False,run)
+
 
 if __name__=='__main__':
     unittest.main()
