@@ -5,10 +5,11 @@ from __future__ import annotations
 import streamlit as st
 from boxing_coach.preview import load_preview, read_preview_frame, selection_times
 from boxing_coach.video_io import MediaInputError
+from boxing_coach.synced_player import render_synced_player
 
 
 def clear_video() -> None:
-    for key in ("video", "frame_index", "start_frame", "end_frame", "mirror"):
+    for key in ("video", "frame_index", "start_frame", "end_frame", "mirror", "view_mode"):
         st.session_state.pop(key, None)
 
 
@@ -44,29 +45,43 @@ last = inspection.frame_count - 1
 st.button("关闭当前视频", on_click=clear_video)
 st.success(f"已打开：{video.path.name}")
 st.caption(f"{inspection.width} × {inspection.height} · {inspection.duration_ms / 1000:.2f} 秒 · {inspection.frame_count} 帧 · 使用原始视频时间戳")
-mirror = st.checkbox("拍摄时开启了镜像保存：纠正右侧逐帧画面", value=False, key="mirror")
+mirror = st.checkbox("拍摄时开启了镜像保存：纠正右侧画面", value=False, key="mirror")
 st.caption("未开启镜像保存时保持不勾选。不确定时先保留原画面；这里不会自动猜测左右手。")
-st.number_input("查看帧号（从 0 开始）", min_value=0, max_value=last, step=1, key="frame_index")
-prev, nxt = st.columns(2)
-prev.button("上一帧", on_click=move_frame, args=(-1,), disabled=st.session_state.frame_index == 0)
-nxt.button("下一帧", on_click=move_frame, args=(1,), disabled=st.session_state.frame_index == last)
+mode = st.radio("查看方式", ["联动播放", "手动逐帧"], horizontal=True, key="view_mode")
+if mode == "联动播放":
+    try:
+        # Revalidate the original file before rendering the immutable local snapshot.
+        read_preview_frame(video, 0)
+        render_synced_player(video, mirror)
+        st.caption("同步画面来自浏览器当前播放帧；精确源帧号与 PTS 核对请切换手动逐帧。更改镜像或选段后，联动播放器会重新加载。")
+    except MediaInputError as exc:
+        clear_video()
+        st.error(f"视频已失效 [{exc.code}]，请重新打开。")
+        st.stop()
+    except ValueError as exc:
+        st.warning(str(exc))
+else:
+    st.number_input("查看帧号（从 0 开始）", min_value=0, max_value=last, step=1, key="frame_index")
+    prev, nxt = st.columns(2)
+    prev.button("上一帧", on_click=move_frame, args=(-1,), disabled=st.session_state.frame_index == 0)
+    nxt.button("下一帧", on_click=move_frame, args=(1,), disabled=st.session_state.frame_index == last)
 
-try:
-    with st.spinner("定位源帧…"):
-        frame = read_preview_frame(video, int(st.session_state.frame_index), correct_mirror=mirror)
-except MediaInputError as exc:
-    clear_video()
-    st.error(f"视频已失效 [{exc.code}]，请重新打开。")
-    st.stop()
+    try:
+        with st.spinner("定位源帧…"):
+            frame = read_preview_frame(video, int(st.session_state.frame_index), correct_mirror=mirror)
+    except MediaInputError as exc:
+        clear_video()
+        st.error(f"视频已失效 [{exc.code}]，请重新打开。")
+        st.stop()
 
-left, right = st.columns(2)
-with left:
-    st.subheader("原片播放")
-    st.video(video.content, format="video/mp4")
-    st.caption("保留拍摄画面和原始音轨。播放器用于观看，不与右侧帧号自动联动；精确时间以右侧为准。")
-with right:
-    st.subheader("逐帧核对")
-    st.image(frame.image_rgb, caption=f"源帧 {frame.source_frame_index} · {frame.timestamp_ms / 1000:.6f} 秒" + (" · 已纠正镜像" if mirror else " · 保留原画面"), width="stretch")
+    left, right = st.columns(2)
+    with left:
+        st.subheader("原片播放")
+        st.video(video.content, format="video/mp4")
+        st.caption("保留拍摄画面和原始音轨。播放器用于观看，不与右侧帧号自动联动；精确时间以右侧为准。")
+    with right:
+        st.subheader("逐帧核对")
+        st.image(frame.image_rgb, caption=f"源帧 {frame.source_frame_index} · {frame.timestamp_ms / 1000:.6f} 秒" + (" · 已纠正镜像" if mirror else " · 保留原画面"), width="stretch")
 
 st.subheader("选择稳定的训练区间")
 st.write("避开拿取手机、出框和遮挡；这只是手动选择，不代表系统判断动作合格。")

@@ -62,6 +62,7 @@ class PreviewTests(unittest.TestCase):
         app = AppTest.from_file(str(ROOT / 'app/main.py'), default_timeout=30).run()
         app.text_input(key='input_path').set_value(str(self.path))
         app.button(key='FormSubmitter:open_video-打开视频').click().run()
+        app.radio(key='view_mode').set_value('手动逐帧').run()
         self.assertEqual(len(app.exception), 0)
         self.assertEqual(len(app.error), 0)
         return app
@@ -90,6 +91,7 @@ class PreviewTests(unittest.TestCase):
         self.assertEqual(len(app.get('video')), 0)
         app.text_input(key='input_path').set_value(str(self.path))
         app.button(key='FormSubmitter:open_video-打开视频').click().run()
+        app.radio(key='view_mode').set_value('手动逐帧').run()
         self.assertEqual(app.number_input(key='frame_index').value, 0)
         self.assertEqual(len(app.exception), 0)
 
@@ -102,6 +104,25 @@ class PreviewTests(unittest.TestCase):
         self.assertEqual(len(app.error), 1)
         self.assertEqual(len(app.get('video')), 0)
         self.assertEqual(len(app.exception), 0)
+
+    def test_default_sync_mode_and_switch_back_to_precise_review(self):
+        app = self.open_app()
+        app.radio(key='view_mode').set_value('联动播放').run()
+        self.assertEqual(len(app.exception), 0)
+        self.assertFalse(any(n.key == 'frame_index' for n in app.number_input))
+        app.radio(key='view_mode').set_value('手动逐帧').run()
+        self.assertEqual(len(app.exception), 0)
+        self.assertEqual(app.number_input(key='frame_index').value, 0)
+
+    def test_binary_payload_and_size_guard(self):
+        from boxing_coach.synced_player import player_payload, MAX_SYNC_BYTES
+        from dataclasses import replace
+        video = load_preview(self.path)
+        self.assertEqual(player_payload(video, False), b'\x00' + video.content)
+        self.assertEqual(player_payload(video, True), b'\x01' + video.content)
+        oversized = replace(video, content=b'0' * (MAX_SYNC_BYTES + 1))
+        with self.assertRaises(ValueError):
+            player_payload(oversized, False)
 
 
 if __name__ == '__main__':

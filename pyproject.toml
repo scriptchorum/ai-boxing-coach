@@ -24,4 +24,4 @@ boxing-coach-video = "boxing_coach.video_io:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-boxing_coach = ["py.typed"]
+boxing_coach = ["py.typed", "player/*.html", "player/*.css", "player/*.js"]
