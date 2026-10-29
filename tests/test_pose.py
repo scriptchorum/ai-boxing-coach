@@ -141,6 +141,26 @@ class PoseTests(unittest.TestCase):
         self.assertFalse('pose_reviews' in app.session_state)
         self.assertEqual(len(app.exception),0)
 
+    def test_review_import_replaces_only_after_validation(self):
+        from boxing_coach.review import export_reviews
+        result=fixture_run(self.video)
+        app=AppTest.from_file(str(ROOT/'app/main.py'),default_timeout=30).run()
+        app.text_input(key='input_path').set_value(str(self.path))
+        app.button(key='FormSubmitter:open_video-打开视频').click().run()
+        with patch('boxing_coach.pose_ui.extract_pose',return_value=result):
+            app.button(key='run_pose').click().run()
+        app.button(key='review_mark_1').click().run()
+        previous=dict(app.session_state.pose_reviews)
+        def uploaded(data): return SimpleNamespace(size=len(data),getvalue=lambda:data)
+        with patch('boxing_coach.pose_ui.st.file_uploader',return_value=uploaded(b'bad json')):
+            app.run(); app.button(key='review_import').click().run()
+        self.assertEqual(app.session_state.pose_reviews,previous)
+        restored={1:'无法判断'}
+        with patch('boxing_coach.pose_ui.st.file_uploader',return_value=uploaded(export_reviews(result,restored))):
+            app.run(); app.button(key='review_import').click().run()
+        self.assertEqual(app.session_state.pose_reviews,restored)
+        self.assertFalse(app.exception)
+
     def test_player_payload_uses_source_pts_and_only_drawable_points(self):
         import struct
         from dataclasses import replace

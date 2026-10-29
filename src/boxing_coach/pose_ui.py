@@ -7,7 +7,7 @@ from .preview import read_preview_frame
 from .video_io import MediaInputError
 from .synced_player import render_synced_player
 from .quality import assess_frames, reason_text, display_frame, VERSION, LABELS
-from .review import FILTERS, VERDICTS, review_indices, neighbors
+from .review import FILTERS, VERDICTS, review_indices, neighbors, export_reviews, import_reviews, MAX_REVIEW_BYTES
 
 
 def clear_pose():
@@ -25,6 +25,25 @@ def record_review(index,verdict):
     reviews=st.session_state.setdefault('pose_reviews',{})
     if verdict == '未记录': reviews.pop(index,None)
     else: reviews[index]=verdict
+
+
+def render_review_files(cached):
+    with st.expander('保存或恢复人工核对记录'):
+        st.caption('文件仅含帧号、你的判断和匹配标识，不含视频或骨架坐标。仍属于私人训练记录，请仅保存在受控目录，不加入 Git。刷新前请先下载；另一台需准备同一原片和相同识别设置。')
+        uploaded=st.file_uploader('选择之前保存的核对记录',type=['json'],key='review_import_file')
+        if st.button('导入并替换当前核对记录',key='review_import',disabled=uploaded is None):
+            try:
+                if uploaded.size>MAX_REVIEW_BYTES: raise ValueError('核对文件超过 1 MiB，未导入。')
+                restored=import_reviews(cached,uploaded.getvalue())
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                st.session_state.pose_reviews=restored
+                st.success(f'已恢复 {len(restored)} 帧记录；原视频和识别结果未修改。')
+        reviews=st.session_state.setdefault('pose_reviews',{})
+        st.download_button('下载本次核对记录',data=export_reviews(cached,reviews),
+                           file_name='boxing-display-review.private.json',mime='application/json',
+                           key='review_download',disabled=not reviews)
 
 
 def render_pose_panel(video,start,end,mirror):
@@ -61,6 +80,7 @@ def render_pose_panel(video,start,end,mirror):
         st.info('尚未生成骨架。点击上方识别按钮，等待处理完成后即可播放。')
         return
     st.button('清除本次关键点结果',on_click=clear_pose)
+    render_review_files(cached)
     decisions = assess_frames(cached)
     st.info(f"分部位显示：{sum(not d['show'] for d in decisions)} 帧全部隐藏，{sum(d['show'] and bool(d['hidden_parts']) for d in decisions)} 帧仅显示部分身体，共 {len(decisions)} 帧。隐藏不表示动作错误，未隐藏也不证明识别准确。")
     st.caption('躯干定位不足、多人或位置突变时全部隐藏；否则分别检查左右手臂和腿，缺一处不再让其他部位一起消失。这是待验证规则，不能认人，也不能排除背景人物或器械误检。')
@@ -120,7 +140,7 @@ def render_pose_panel(video,start,end,mirror):
     right.image(draw_pose(decoded.image_rgb,display_frame(pose_frame,decision)),caption='通过显示过滤的部位才绘制；线条不代表动作评价',width='stretch')
     reviews=st.session_state.setdefault('pose_reviews',{})
     st.write('此帧人工记录：'+reviews.get(index,'未记录'))
-    st.caption('只记录显示情况，不判断拳术动作对错；全部隐藏时请选择“无法判断”。记录只在本次会话，刷新、重识别或换片会清除，不写入文件或上传。')
+    st.caption('只记录显示情况，不判断拳术动作对错；全部隐藏时请选择“无法判断”。会话记录刷新、重识别或换片会清除；可在上方“保存或恢复人工核对记录”手动下载备份，不自动上传。')
     columns=st.columns(2)
     for n,verdict in enumerate(VERDICTS[1:]):
         columns[n%2].button(verdict,key=f'review_mark_{n}',on_click=record_review,args=(index,verdict),disabled=not decision['show'] and verdict!='无法判断')

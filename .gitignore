@@ -62,3 +62,5 @@ coverage/
 Thumbs.db
 *.log
 *.tmp
+# User-exported display review notes (private, never repository fixtures).
+*.private.json
