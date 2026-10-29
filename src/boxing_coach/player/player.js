@@ -56,7 +56,7 @@ export default function ({data, parentElement}) {
         }
         poseStatus=` · 骨架源帧 ${frame.index}（模型估计）`;
       } else if (frame) {
-        poseStatus=frame.status==='multiple_poses' ? ' · 多个候选，骨架已隐藏' : ' · 未检出，骨架已隐藏';
+        poseStatus=frame.status==='quality_rejected' ? ` · 骨架已隐藏：${frame.reason}` : frame.status==='multiple_poses' ? ' · 多个候选，骨架已隐藏' : ' · 未检出，骨架已隐藏';
       } else {
         poseStatus=supportsFrames ? ' · 此画面未匹配已识别帧，骨架已隐藏' : ' · 此浏览器不支持精确帧回调，请用下方逐帧骨架核对';
       }

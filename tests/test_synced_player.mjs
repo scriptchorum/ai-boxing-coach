@@ -73,6 +73,11 @@ const poseFixture={edges:[[11,13]],frames:[
   {time:1.177,index:8,status:'multiple_poses',points:{}},
   {time:1.250,index:9,status:'no_pose',points:{}}
 ]};
+test('quality rejection shows its reason and never draws points',()=>{
+  const f=fixture({poses:{edges:[[11,13]],frames:[{...poseFixture.frames[0],status:'quality_rejected',reason:'身体关键点落在画面外'}]}});
+  f.present(1.120); assert.equal(f.lines.length,0); assert.equal(f.dots.length,0);
+  assert.match(f.status.textContent,/身体关键点落在画面外/); f.cleanup();
+});
 test('pose follows exact VFR presentation timestamps; unmatched and multiple frames hide it',()=>{
   const f=fixture({poses:poseFixture}); f.emit('loadedmetadata'); assert.equal(f.video.currentTime,1.120);
   f.present(1.120); assert.equal(f.lines.length,1); assert.match(f.status.textContent,/源帧 7/);

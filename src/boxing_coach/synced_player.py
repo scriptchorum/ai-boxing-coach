@@ -32,13 +32,16 @@ def player_payload(video: PreviewVideo, correct_mirror: bool, pose_run=None) -> 
     if abs(video.inspection.original_pts_start_ms) > 0.001:
         raise ValueError('此视频的起始时间偏移尚未验证骨架联动，请使用逐帧核对。')
     frames = []
-    for frame, diagnostic in zip(pose_run.frames, pose_run.diagnostics):
+    from .quality import assess_frames, reason_text, VERSION
+    decisions = assess_frames(pose_run)
+    for frame, diagnostic, decision in zip(pose_run.frames, pose_run.diagnostics, decisions):
         points = {str(p['index']): [p['image']['x'], p['image']['y']]
                   for p in frame['landmarks'] if p['index'] >= 11 and drawable(p)}
         frames.append({'time': frame['timestamp_ms']/1000,
                        'index': frame['source_frame_index'],
-                       'status': diagnostic['status'], 'points': points})
-    metadata = json.dumps({'frames':frames,'edges':EDGES}, separators=(',',':'),allow_nan=False).encode('utf-8')
+                       'status': diagnostic['status'] if decision['show'] else 'quality_rejected',
+                       'reason':reason_text(decision), 'points': points if decision['show'] else {}})
+    metadata = json.dumps({'frames':frames,'edges':EDGES,'quality_version':VERSION}, separators=(',',':'),allow_nan=False).encode('utf-8')
     # Flag bit 1 introduces a little-endian metadata length + JSON, before MP4.
     return bytes([2 + int(correct_mirror)]) + struct.pack('<I',len(metadata)) + metadata + video.content
 
