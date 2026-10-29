@@ -46,13 +46,20 @@ export default function ({data, parentElement}) {
         const points=frame.points;
         const pixel=p=>[p[0]*canvas.width,p[1]*canvas.height];
         // Points already use corrected image coordinates: do not mirror them twice.
-        context.strokeStyle='#00dcff'; context.lineWidth=Math.max(2,canvas.width/300);
+        const centerColor=poses.center_color || '#f5f5f5';
+        const style=i=>poses.point_styles?.[i] || {color:centerColor,shape:'circle'};
+        context.lineWidth=Math.max(2,canvas.width/300);
         for (const [a,b] of poses.edges) if (points[a] && points[b]) {
+          context.strokeStyle=style(a).color===style(b).color ? style(a).color : centerColor;
           context.beginPath(); context.moveTo(...pixel(points[a])); context.lineTo(...pixel(points[b])); context.stroke();
         }
-        context.fillStyle='#ffb400';
-        for (const p of Object.values(points)) {
-          context.beginPath(); context.arc(...pixel(p),Math.max(3,canvas.width/180),0,2*Math.PI); context.fill();
+        for (const [i,p] of Object.entries(points)) {
+          const pointStyle=style(i), [x,y]=pixel(p), radius=Math.max(3,canvas.width/180);
+          context.fillStyle=pointStyle.color;
+          if (pointStyle.shape==='square') context.fillRect(x-radius,y-radius,2*radius,2*radius);
+          else {
+            context.beginPath(); context.arc(x,y,radius,0,2*Math.PI); context.fill();
+          }
         }
         poseStatus=` · 骨架源帧 ${frame.index}（模型估计）`;
         if (frame.hidden_parts?.length) poseStatus+=` · 部分显示，未显示：${frame.hidden_parts.join('、')}（缺失、出框或信号不足）`;

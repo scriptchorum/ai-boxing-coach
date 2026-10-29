@@ -25,7 +25,7 @@ def player_payload(video: PreviewVideo, correct_mirror: bool, pose_run=None) -> 
     # No filenames, paths, external endpoints, or executable user content.
     if pose_run is None:
         return bytes([int(correct_mirror)]) + video.content
-    from .pose import EDGES, drawable, run_key
+    from .pose import EDGES, POINT_STYLES, CENTER_COLOR, drawable, run_key
     if pose_run.key != run_key(video, pose_run.start, pose_run.end, correct_mirror):
         raise ValueError('关键点与当前视频或镜像不一致，请重新识别。')
     # Non-zero container origins need separate browser timeline validation.
@@ -42,7 +42,8 @@ def player_payload(video: PreviewVideo, correct_mirror: bool, pose_run=None) -> 
                        'status': diagnostic['status'] if decision['show'] else 'quality_rejected',
                        'reason':reason_text(decision), 'hidden_parts':decision['hidden_parts'],
                        'points': points if decision['show'] else {}})
-    metadata = json.dumps({'frames':frames,'edges':EDGES,'quality_version':VERSION}, separators=(',',':'),allow_nan=False).encode('utf-8')
+    metadata = json.dumps({'frames':frames,'edges':EDGES,'quality_version':VERSION,
+                           'point_styles':POINT_STYLES,'center_color':CENTER_COLOR}, separators=(',',':'),allow_nan=False).encode('utf-8')
     # Flag bit 1 introduces a little-endian metadata length + JSON, before MP4.
     return bytes([2 + int(correct_mirror)]) + struct.pack('<I',len(metadata)) + metadata + video.content
 

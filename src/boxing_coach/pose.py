@@ -23,6 +23,14 @@ CONFIG = {
 }
 JOINTS = {11:'左肩',12:'右肩',13:'左肘',14:'右肘',15:'左腕',16:'右腕',23:'左髋',24:'右髋',25:'左膝',26:'右膝',27:'左踝',28:'右踝'}
 EDGES = ((11,12),(11,13),(13,15),(12,14),(14,16),(11,23),(12,24),(23,24),(23,25),(25,27),(24,26),(26,28),(27,29),(29,31),(28,30),(30,32))
+LEFT_COLOR = '#00bfe8'
+RIGHT_COLOR = '#ff9f43'
+CENTER_COLOR = '#f5f5f5'
+# Anatomical model labels stay attached to their indices, including after mirroring.
+POINT_STYLES = {
+    **{str(i): {'color': LEFT_COLOR, 'shape': 'circle'} for i in (11,13,15,17,19,21,23,25,27,29,31)},
+    **{str(i): {'color': RIGHT_COLOR, 'shape': 'square'} for i in (12,14,16,18,20,22,24,26,28,30,32)},
+}
 
 
 class PoseError(RuntimeError):
@@ -181,10 +189,20 @@ def draw_pose(image_rgb: np.ndarray, frame: dict) -> np.ndarray:
     def pixel(index):
         image = points[index]['image']
         return (min(width-1,round(image['x']*width)),min(height-1,round(image['y']*height)))
+    def style(index):
+        return POINT_STYLES.get(str(index), {'color': CENTER_COLOR, 'shape': 'circle'})
+    def rgb(color):
+        return tuple(int(color[i:i+2],16) for i in (1,3,5))
     for a,b in EDGES:
         if a in points and b in points:
-            cv2.line(output,pixel(a),pixel(b),(0,220,255),max(2,width//300),cv2.LINE_AA)
+            color = style(a)['color'] if style(a)['color']==style(b)['color'] else CENTER_COLOR
+            cv2.line(output,pixel(a),pixel(b),rgb(color),max(2,width//300),cv2.LINE_AA)
     for index in points:
         if index >= 11:
-            cv2.circle(output,pixel(index),max(3,width//180),(255,180,0),-1,cv2.LINE_AA)
+            point_style=style(index)
+            x,y=pixel(index); radius=max(3,width//180)
+            if point_style['shape']=='square':
+                cv2.rectangle(output,(x-radius,y-radius),(x+radius,y+radius),rgb(point_style['color']),-1,cv2.LINE_AA)
+            else:
+                cv2.circle(output,(x,y),radius,rgb(point_style['color']),-1,cv2.LINE_AA)
     return output

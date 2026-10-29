@@ -2,7 +2,7 @@
 import streamlit as st
 
 from .model_assets import AssetError
-from .pose import JOINTS, PoseError, draw_pose, drawable, extract_pose, run_key
+from .pose import JOINTS, LEFT_COLOR, RIGHT_COLOR, PoseError, draw_pose, drawable, extract_pose, run_key
 from .preview import read_preview_frame
 from .video_io import MediaInputError
 from .synced_player import render_synced_player
@@ -25,6 +25,13 @@ def record_review(index,verdict):
     reviews=st.session_state.setdefault('pose_reviews',{})
     if verdict == '未记录': reviews.pop(index,None)
     else: reviews[index]=verdict
+
+
+def render_side_legend():
+    st.markdown(f'<span style="color:{LEFT_COLOR}">● 左侧肢体（圆点）</span>　'
+                f'<span style="color:{RIGHT_COLOR}">■ 右侧肢体（方点）</span>　肩线与髋线为白色',
+                unsafe_allow_html=True)
+    st.caption('左右指训练者身体的模型标签，不是画面左右，也不代表惯用手或前后手。镜像纠正后颜色仍跟随同一标签；重叠不代表识别错误，模型也可能把左右认反，需对照原片。')
 
 
 def render_review_files(cached):
@@ -88,6 +95,7 @@ def render_pose_panel(video,start,end,mirror):
         st.dataframe([{'原因':label,'帧数':sum(code in d['reasons'] for d in decisions),'总帧数':len(decisions)} for code,label in LABELS.items()],hide_index=True)
         st.caption(f'规则版本 {VERSION}；同一帧可有多个原因，各项不能直接相加。')
     st.write('点击下面左侧视频的 ▶ 播放，右侧骨架随画面变化；暂停或拖动也可核对。仅识别过的区间显示骨架。')
+    render_side_legend()
     try:
         read_preview_frame(video,start,correct_mirror=mirror)
         render_synced_player(video,mirror,cached)
@@ -137,7 +145,7 @@ def render_pose_panel(video,start,end,mirror):
         st.warning('此帧骨架已隐藏：'+reason_text(decision))
     elif decision['hidden_parts']:
         st.warning('此帧部分显示；未显示：'+'、'.join(decision['hidden_parts'])+'。'+reason_text(decision))
-    right.image(draw_pose(decoded.image_rgb,display_frame(pose_frame,decision)),caption='通过显示过滤的部位才绘制；线条不代表动作评价',width='stretch')
+    right.image(draw_pose(decoded.image_rgb,display_frame(pose_frame,decision)),caption='左侧青蓝圆点 · 右侧橙色方点；通过过滤的部位才绘制，线条不代表动作评价',width='stretch')
     reviews=st.session_state.setdefault('pose_reviews',{})
     st.write('此帧人工记录：'+reviews.get(index,'未记录'))
     st.caption('只记录显示情况，不判断拳术动作对错；全部隐藏时请选择“无法判断”。会话记录刷新、重识别或换片会清除；可在上方“保存或恢复人工核对记录”手动下载备份，不自动上传。')
