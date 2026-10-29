@@ -14,7 +14,8 @@ def clear_pose():
 
 
 def render_pose_panel(video,start,end,mirror):
-    st.subheader('人体关键点试跑')
+    st.subheader('播放并查看骨架',anchor='pose-playback')
+    st.write('先点击下方“识别所选区间的人体关键点”，完成后播放器会出现在这里。刷新或换片后需要重新识别。')
     st.write('对上方所选区间运行本地模型，再逐帧核对肩、肘、腕、髋、膝与踝。结果只保留在当前会话，不上传或写入训练历史。')
     st.caption('目前是工程试跑：模型信号不等于识别准确率，也不表示动作正确。女性身体多样性的正式验证仍待完成。每次最多 30 秒、1800 帧。')
     try:
@@ -43,9 +44,9 @@ def render_pose_panel(video,start,end,mirror):
         finally:
             bar.empty()
     if cached is None:
+        st.info('尚未生成骨架。点击上方识别按钮，等待处理完成后即可播放。')
         return
     st.button('清除本次关键点结果',on_click=clear_pose)
-    st.subheader('播放并查看骨架')
     st.write('点击下面左侧视频的 ▶ 播放，右侧骨架随画面变化；暂停或拖动也可核对。仅识别过的区间显示骨架。')
     try:
         read_preview_frame(video,start,correct_mirror=mirror)

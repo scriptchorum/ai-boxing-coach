@@ -21,6 +21,7 @@ def move_frame(delta: int) -> None:
 st.set_page_config(page_title="女性搏击视频复盘工具", page_icon="🥊", layout="wide")
 st.title("女性搏击视频复盘工具")
 st.caption("以女性身体多样性为核心 · 本地自用预览版")
+st.markdown('**使用顺序：打开视频 → 识别关键点 → 播放骨架。** 打开视频后，可点击 [前往骨架播放区](#pose-playback)。')
 st.info("现在可以看视频、选取训练区间，并手动启动本地人体关键点试跑。尚无动作分析，不提供评分、拳力或伤病判断。")
 st.write("视频仅在这台电脑读取和显示，不上传云端，也不修改原片。请在文件资源管理器中复制视频路径，粘贴到下方。")
 with st.form("open_video"):
