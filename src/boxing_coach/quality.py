@@ -2,7 +2,9 @@
 from math import hypot
 from .pose import JOINTS, drawable
 
-VERSION = 'display-quality-0.1'
+VERSION = 'display-quality-0.2'
+TORSO = (11,12,23,24)
+LIMBS = {'左臂':(11,13,15),'右臂':(12,14,16),'左腿':(23,25,27),'右腿':(24,26,28)}
 MAX_TORSO_SPEED = 3.0  # normalized image axes per second, candidate threshold
 MAX_GAP_MS = 100.0
 LABELS = {
@@ -12,6 +14,7 @@ LABELS = {
     'missing_points': '全身关键点不完整或信号不足',
     'position_jump': '躯干位置突变，需人工核对',
     'time_gap': '时间间隔过大，无法连续核对',
+    'torso_missing': '躯干关键点不足，无法可靠定位',
 }
 
 def assess_frames(run):
@@ -24,6 +27,8 @@ def assess_frames(run):
     previous=None
     for frame, diagnostic in zip(run.frames,run.diagnostics,strict=True):
         reasons=[]
+        allowed=[]
+        hidden_parts=[]
         if diagnostic['status'] != 'single_model_pose':
             reasons.append(diagnostic['status'])
             previous=None
@@ -36,9 +41,15 @@ def assess_frames(run):
                 reasons.append('out_of_frame')
             if any(not drawable(p) for p in required):
                 reasons.append('missing_points')
-            torso=[points[i] for i in (11,12,23,24)]
+            torso=[points[i] for i in TORSO]
             current=None
             if all(drawable(p) for p in torso):
+                allowed.extend(TORSO)
+                for name,indices in LIMBS.items():
+                    if all(drawable(points[i]) for i in indices):
+                        allowed.extend(indices[1:])
+                    else:
+                        hidden_parts.append(name)
                 center=tuple(sum(p['image'][axis] for p in torso)/4 for axis in ('x','y'))
                 current=(frame['timestamp_ms'],center)
                 if previous is not None:
@@ -47,9 +58,19 @@ def assess_frames(run):
                         reasons.append('time_gap')
                     elif hypot(center[0]-previous[1][0],center[1]-previous[1][1])/(dt/1000) > MAX_TORSO_SPEED:
                         reasons.append('position_jump')
+            else:
+                reasons.append('torso_missing')
             previous=current
-        results.append({'show':not reasons,'reasons':reasons})
+        block = any(code not in ('missing_points','out_of_frame') for code in reasons)
+        if block: allowed=[]
+        results.append({'show':bool(allowed),'reasons':reasons,'allowed_indices':allowed,
+                        'hidden_parts':hidden_parts if not block else list(LIMBS)})
     return results
 
 def reason_text(decision):
     return '；'.join(LABELS[code] for code in decision['reasons'])
+
+def display_frame(frame,decision):
+    """Project only allowed joints for both renderers, without changing evidence."""
+    allowed=set(decision['allowed_indices'])
+    return {**frame,'landmarks':[p for p in frame['landmarks'] if p['index'] in allowed]}

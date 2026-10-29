@@ -55,6 +55,7 @@ export default function ({data, parentElement}) {
           context.beginPath(); context.arc(...pixel(p),Math.max(3,canvas.width/180),0,2*Math.PI); context.fill();
         }
         poseStatus=` · 骨架源帧 ${frame.index}（模型估计）`;
+        if (frame.hidden_parts?.length) poseStatus+=` · 部分显示，未显示：${frame.hidden_parts.join('、')}（缺失、出框或信号不足）`;
       } else if (frame) {
         poseStatus=frame.status==='quality_rejected' ? ` · 骨架已隐藏：${frame.reason}` : frame.status==='multiple_poses' ? ' · 多个候选，骨架已隐藏' : ' · 未检出，骨架已隐藏';
       } else {

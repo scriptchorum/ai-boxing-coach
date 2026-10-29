@@ -6,7 +6,7 @@ from .pose import JOINTS, PoseError, draw_pose, drawable, extract_pose, run_key
 from .preview import read_preview_frame
 from .video_io import MediaInputError
 from .synced_player import render_synced_player
-from .quality import assess_frames, reason_text, VERSION, LABELS
+from .quality import assess_frames, reason_text, display_frame, VERSION, LABELS
 
 
 def clear_pose():
@@ -49,8 +49,8 @@ def render_pose_panel(video,start,end,mirror):
         return
     st.button('清除本次关键点结果',on_click=clear_pose)
     decisions = assess_frames(cached)
-    st.info(f"显示过滤已开启：{sum(not d['show'] for d in decisions)}/{len(decisions)} 帧隐藏骨架。隐藏不表示动作错误，未隐藏也不证明识别准确。")
-    st.caption('当前要求肩、肘、腕、髋、膝、踝均满足绘制条件，并检查躯干突变。这是待验证规则，不能认人，也不能排除稳定的背景人物或器械误检。')
+    st.info(f"分部位显示：{sum(not d['show'] for d in decisions)} 帧全部隐藏，{sum(d['show'] and bool(d['hidden_parts']) for d in decisions)} 帧仅显示部分身体，共 {len(decisions)} 帧。隐藏不表示动作错误，未隐藏也不证明识别准确。")
+    st.caption('躯干定位不足、多人或位置突变时全部隐藏；否则分别检查左右手臂和腿，缺一处不再让其他部位一起消失。这是待验证规则，不能认人，也不能排除背景人物或器械误检。')
     with st.expander('查看隐藏原因统计'):
         st.dataframe([{'原因':label,'帧数':sum(code in d['reasons'] for d in decisions),'总帧数':len(decisions)} for code,label in LABELS.items()],hide_index=True)
         st.caption(f'规则版本 {VERSION}；同一帧可有多个原因，各项不能直接相加。')
@@ -89,9 +89,11 @@ def render_pose_panel(video,start,end,mirror):
     left.image(decoded.image_rgb,caption=f'源帧 {index} · {decoded.timestamp_ms/1000:.3f} 秒',width='stretch')
     if not decision['show']:
         st.warning('此帧骨架已隐藏：'+reason_text(decision))
-    right.image(draw_pose(decoded.image_rgb,pose_frame) if decision['show'] else decoded.image_rgb,caption='通过显示过滤才绘制骨架；线条不代表动作评价',width='stretch')
+    elif decision['hidden_parts']:
+        st.warning('此帧部分显示；未显示：'+'、'.join(decision['hidden_parts'])+'。'+reason_text(decision))
+    right.image(draw_pose(decoded.image_rgb,display_frame(pose_frame,decision)),caption='通过显示过滤的部位才绘制；线条不代表动作评价',width='stretch')
     with st.expander('此帧关键点与运行信息'):
-        st.dataframe([{'关键点':name,'绘制':drawable(pose_frame['landmarks'][idx]),
+        st.dataframe([{'关键点':name,'绘制':idx in decision['allowed_indices'],
                        'visibility':pose_frame['landmarks'][idx]['visibility'],
                        'presence':pose_frame['landmarks'][idx]['presence']} for idx,name in JOINTS.items()],hide_index=True)
         st.json({'model':cached.model,'runtime':cached.runtime,'config':cached.config,

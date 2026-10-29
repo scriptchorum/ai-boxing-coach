@@ -78,6 +78,10 @@ test('quality rejection shows its reason and never draws points',()=>{
   f.present(1.120); assert.equal(f.lines.length,0); assert.equal(f.dots.length,0);
   assert.match(f.status.textContent,/身体关键点落在画面外/); f.cleanup();
 });
+test('partial body display draws supplied limbs and names hidden parts',()=>{
+  const f=fixture({poses:{edges:[[11,13],[23,25]],frames:[{...poseFixture.frames[0],hidden_parts:['左腿']}]}});
+  f.present(1.120); assert.equal(f.lines.length,1); assert.match(f.status.textContent,/部分显示，未显示：左腿/); f.cleanup();
+});
 test('pose follows exact VFR presentation timestamps; unmatched and multiple frames hide it',()=>{
   const f=fixture({poses:poseFixture}); f.emit('loadedmetadata'); assert.equal(f.video.currentTime,1.120);
   f.present(1.120); assert.equal(f.lines.length,1); assert.match(f.status.textContent,/源帧 7/);

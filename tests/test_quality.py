@@ -45,7 +45,7 @@ class QualityTests(unittest.TestCase):
         case=PoseTests(); case.setUp()
         try:
             result=fixture_run(case.video)
-            result.frames[0]['landmarks'][15]['presence']=.1
+            result.frames[0]['landmarks'][11]['presence']=.1
             payload=player_payload(case.video,False,result)
             length=struct.unpack('<I',payload[1:5])[0]
             f=json.loads(payload[5:5+length])['frames'][0]
@@ -53,3 +53,16 @@ class QualityTests(unittest.TestCase):
             self.assertEqual(f['points'],{})
             self.assertTrue(f['reason'])
         finally: case.doCleanups()
+
+    def test_limb_missing_keeps_other_limbs_and_static_payload_projection_agrees(self):
+        from boxing_coach.quality import display_frame
+        f=frame(0); f['landmarks'][27]['visibility']=.1
+        before=copy.deepcopy(f)
+        d=assess_frames(run([f]))[0]
+        self.assertTrue(d['show']); self.assertEqual(d['hidden_parts'],['左腿'])
+        self.assertIn(15,d['allowed_indices']); self.assertIn(28,d['allowed_indices'])
+        self.assertNotIn(25,d['allowed_indices']); self.assertNotIn(27,d['allowed_indices'])
+        self.assertEqual({p['index'] for p in display_frame(f,d)['landmarks']},set(d['allowed_indices']))
+        self.assertEqual(f,before)
+        f['landmarks'][23]['visibility']=.1
+        self.assertFalse(assess_frames(run([f]))[0]['show'])
