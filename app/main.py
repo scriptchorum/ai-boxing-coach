@@ -10,7 +10,7 @@ from boxing_coach.pose_ui import render_pose_panel
 
 
 def clear_video() -> None:
-    for key in ("video", "frame_index", "start_frame", "end_frame", "mirror", "view_mode", "pose_run", "pose_index"):
+    for key in ("video", "frame_index", "start_frame", "end_frame", "mirror", "view_mode", "pose_run", "pose_index", "pose_reviews", "pose_review_filter"):
         st.session_state.pop(key, None)
 
 

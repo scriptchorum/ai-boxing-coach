@@ -112,6 +112,35 @@ class PoseTests(unittest.TestCase):
         self.assertFalse(any(n.key=='pose_index' for n in app.number_input))
         self.assertEqual(len(app.exception),0)
 
+    def test_review_navigation_records_and_reset(self):
+        import copy
+        result=fixture_run(self.video)
+        result.frames=copy.deepcopy(result.frames)
+        # deepcopy preserves shared references; replace this frame explicitly.
+        result.frames[1]=copy.deepcopy(result.frames[1])
+        result.frames[1]['landmarks'][27]['visibility']=.1
+        app=AppTest.from_file(str(ROOT/'app/main.py'),default_timeout=30).run()
+        app.text_input(key='input_path').set_value(str(self.path))
+        app.button(key='FormSubmitter:open_video-打开视频').click().run()
+        with patch('boxing_coach.pose_ui.extract_pose',return_value=result):
+            app.button(key='run_pose').click().run()
+        app.button(key='review_next').click().run()
+        self.assertEqual(app.number_input(key='pose_index').value,1)
+        self.assertTrue(app.button(key='review_next').disabled)
+        self.assertEqual(app.session_state.pose_reviews,{})
+        app.button(key='review_mark_1').click().run()
+        self.assertEqual(app.session_state.pose_reviews,{1:'跟错人或落在器械上'})
+        app.selectbox(key='pose_review_filter').set_value('完整显示（检查漏检）').run()
+        app.button(key='review_next').click().run()
+        self.assertEqual(app.number_input(key='pose_index').value,2)
+        app.button(key='review_prev').click().run()
+        self.assertEqual(app.number_input(key='pose_index').value,0)
+        app.selectbox(key='pose_review_filter').set_value('仅全部隐藏').run()
+        self.assertTrue(app.button(key='review_first').disabled)
+        app.checkbox(key='mirror').set_value(True).run()
+        self.assertFalse('pose_reviews' in app.session_state)
+        self.assertEqual(len(app.exception),0)
+
     def test_player_payload_uses_source_pts_and_only_drawable_points(self):
         import struct
         from dataclasses import replace
