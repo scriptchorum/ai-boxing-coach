@@ -25,6 +25,8 @@ def assess_frames(run):
     """
     results=[]
     previous=None
+    config=getattr(run,'config',None)
+    can_draw=lambda point: drawable(point,config)
     for frame, diagnostic in zip(run.frames,run.diagnostics,strict=True):
         reasons=[]
         allowed=[]
@@ -39,14 +41,14 @@ def assess_frames(run):
                    not (0 <= p['image']['x'] <= 1 and 0 <= p['image']['y'] <= 1)
                    for p in required):
                 reasons.append('out_of_frame')
-            if any(not drawable(p) for p in required):
+            if any(not can_draw(p) for p in required):
                 reasons.append('missing_points')
             torso=[points[i] for i in TORSO]
             current=None
-            if all(drawable(p) for p in torso):
+            if all(can_draw(p) for p in torso):
                 allowed.extend(TORSO)
                 for name,indices in LIMBS.items():
-                    if all(drawable(points[i]) for i in indices):
+                    if all(can_draw(points[i]) for i in indices):
                         allowed.extend(indices[1:])
                     else:
                         hidden_parts.append(name)

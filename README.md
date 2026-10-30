@@ -30,6 +30,7 @@ AI Boxing Coach 面向女性训练者，以女性身体多样性为主要设计�
 - [正式数据契约与运行说明](docs/CONTRACTS.md)：输入输出、单位、缺失、左右、证据及合成校验。
 - [视频探测、解码与时间轴](docs/VIDEO_IO.md)：T04 本地命令、PTS、显示变换、输入限制与真实素材待办。
 - [T05 设备 B 复现记录](docs/verification/T05_DEVICE_B.md)：无真人素材的模型复现、隐私安全批量诊断和剩余门槛。
+- [分析质量门禁](docs/QUALITY_GATES.md)：T06 逐片/逐指标拒绝原因、空值策略和合成验证边界。
 - [冻结验收与当前证据](docs/GATES.md)：T01 完成证据和 G0–G4 尚待满足的条件。
 - [决策记录](docs/DECISIONS.md)：用户已确认条件、规划选择和待确认项。
 - [双机同步指南](docs/SYNC.md)：两台电脑接入与日常工作流程。
