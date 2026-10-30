@@ -1,0 +1,335 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/scriptchorum/ai-boxing-coach/schemas/sample-intake.schema.json",
+  "title": "Private sample intake record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "record_kind",
+    "synthetic",
+    "collection_id",
+    "purpose",
+    "participants",
+    "samples"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1.0"
+    },
+    "record_kind": {
+      "const": "private_sample_intake"
+    },
+    "synthetic": {
+      "type": "boolean"
+    },
+    "collection_id": {
+      "type": "string",
+      "pattern": "^collection-[a-z0-9][a-z0-9-]{1,39}$"
+    },
+    "purpose": {
+      "$ref": "#/$defs/allowed_use"
+    },
+    "participants": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/participant"
+      }
+    },
+    "samples": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/sample"
+      }
+    }
+  },
+  "$defs": {
+    "allowed_use": {
+      "type": "string",
+      "enum": [
+        "local_media_probe",
+        "local_pose_engineering",
+        "demo_g1",
+        "alpha_development",
+        "alpha_holdout"
+      ]
+    },
+    "participant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "participant_id",
+        "adult_confirmed",
+        "self_reported_gender_group",
+        "authorization"
+      ],
+      "properties": {
+        "participant_id": {
+          "type": "string",
+          "pattern": "^participant-[a-z0-9][a-z0-9-]{1,39}$"
+        },
+        "adult_confirmed": {
+          "type": "boolean"
+        },
+        "self_reported_gender_group": {
+          "type": "string",
+          "enum": [
+            "woman",
+            "man",
+            "nonbinary_or_another_identity",
+            "not_provided"
+          ]
+        },
+        "authorization": {
+          "$ref": "#/$defs/authorization"
+        }
+      }
+    },
+    "authorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "reference_id",
+        "allowed_uses",
+        "retention_review_date",
+        "delete_on_withdrawal"
+      ],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "granted",
+            "withdrawn"
+          ]
+        },
+        "reference_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^authorization-[a-z0-9][a-z0-9-]{1,39}$"
+        },
+        "allowed_uses": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/allowed_use"
+          }
+        },
+        "retention_review_date": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "format": "date"
+        },
+        "delete_on_withdrawal": {
+          "const": true
+        }
+      }
+    },
+    "sample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sample_id",
+        "participant_id",
+        "session_id",
+        "lineage_id",
+        "state",
+        "use_status",
+        "local_file_label",
+        "video_sha256",
+        "duration_ms",
+        "expected_class",
+        "bad_reasons",
+        "capture"
+      ],
+      "properties": {
+        "sample_id": {
+          "type": "string",
+          "pattern": "^sample-[a-z0-9][a-z0-9-]{1,39}$"
+        },
+        "participant_id": {
+          "type": "string",
+          "pattern": "^participant-[a-z0-9][a-z0-9-]{1,39}$"
+        },
+        "session_id": {
+          "type": "string",
+          "pattern": "^session-[a-z0-9][a-z0-9-]{1,39}$"
+        },
+        "lineage_id": {
+          "type": "string",
+          "pattern": "^lineage-[a-z0-9][a-z0-9-]{1,39}$"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "planned",
+            "captured",
+            "probed",
+            "withdrawn"
+          ]
+        },
+        "use_status": {
+          "type": "string",
+          "enum": [
+            "eligible",
+            "do_not_use"
+          ]
+        },
+        "local_file_label": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+        },
+        "video_sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "duration_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1,
+          "maximum": 120000
+        },
+        "expected_class": {
+          "type": "string",
+          "enum": [
+            "normative",
+            "bad"
+          ]
+        },
+        "bad_reasons": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": [
+              "unsupported_format",
+              "corrupt_or_unreadable",
+              "multiple_people",
+              "out_of_frame",
+              "occlusion",
+              "blur",
+              "unsupported_view",
+              "timeline_error",
+              "other_predeclared"
+            ]
+          }
+        },
+        "capture": {
+          "$ref": "#/$defs/capture"
+        }
+      }
+    },
+    "capture_check": {
+      "type": "string",
+      "enum": [
+        "pass",
+        "fail",
+        "unknown"
+      ]
+    },
+    "capture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "view",
+        "stance",
+        "camera",
+        "mirror_saved",
+        "target_fps",
+        "repetitions",
+        "clothing_visibility_group",
+        "single_person",
+        "full_body_visible",
+        "phone_fixed",
+        "foreground_clear",
+        "lighting_usable"
+      ],
+      "properties": {
+        "view": {
+          "type": "string",
+          "enum": [
+            "side",
+            "front_45",
+            "other",
+            "unknown"
+          ]
+        },
+        "stance": {
+          "type": "string",
+          "enum": [
+            "orthodox",
+            "southpaw",
+            "unknown"
+          ]
+        },
+        "camera": {
+          "type": "string",
+          "enum": [
+            "rear",
+            "front",
+            "unknown"
+          ]
+        },
+        "mirror_saved": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "target_fps": {
+          "enum": [
+            30,
+            60,
+            null
+          ]
+        },
+        "repetitions": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0,
+          "maximum": 50
+        },
+        "clothing_visibility_group": {
+          "type": "string",
+          "enum": [
+            "fitted_top",
+            "loose_top",
+            "long_sleeves",
+            "other",
+            "not_provided"
+          ]
+        },
+        "single_person": {
+          "$ref": "#/$defs/capture_check"
+        },
+        "full_body_visible": {
+          "$ref": "#/$defs/capture_check"
+        },
+        "phone_fixed": {
+          "$ref": "#/$defs/capture_check"
+        },
+        "foreground_clear": {
+          "$ref": "#/$defs/capture_check"
+        },
+        "lighting_usable": {
+          "$ref": "#/$defs/capture_check"
+        }
+      }
+    }
+  }
+}

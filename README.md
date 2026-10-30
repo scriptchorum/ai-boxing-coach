@@ -26,6 +26,7 @@ AI Boxing Coach 面向女性训练者，以女性身体多样性为主要设计�
 - [执行方案](docs/EXECUTION_PLAN.md)：范围、工时、里程碑、架构与首周安排。
 - [工作量与任务卡](docs/BACKLOG.md)：16 项任务、依赖、分工和验收。
 - [女性主样本数据与验收](docs/DATA_EVALUATION.md)：采集覆盖、事件定义、独立测试和隐私。
+- [私有素材采集准备](docs/SAMPLE_COLLECTION.md)：本地匿名清单、授权用途、拍摄检查和 G1 数量校验。
 - [正式数据契约与运行说明](docs/CONTRACTS.md)：输入输出、单位、缺失、左右、证据及合成校验。
 - [视频探测、解码与时间轴](docs/VIDEO_IO.md)：T04 本地命令、PTS、显示变换、输入限制与真实素材待办。
 - [冻结验收与当前证据](docs/GATES.md)：T01 完成证据和 G0–G4 尚待满足的条件。

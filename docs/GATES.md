@@ -11,7 +11,7 @@
 | 四个正式数据契约、单位、左右和时间轴 | 已完成 | schemas/contracts.schema.json 与 CONTRACTS.md |
 | 合成有效/缺失/拒绝状态可校验 | 已通过本机检查 | 3 个合成 bundle；19 个 unittest 测试方法，含多组反例 |
 | 分区泄漏、证据与数值、空值和版本校验 | 已通过本机检查 | tools/validate_contracts.py、tests/test_contracts.py |
-| 首批真实授权素材存在且可用 | 待 T02 完整核验 | 5 条本地视频已通过媒体解码检查，授权记录及样本覆盖尚未核验；见 [T04 设备 A 记录](verification/T04_DEVICE_A.md) |
+| 首批真实授权素材存在且可用 | 待 T02 完整核验 | 私有清单 schema 与本地校验工具已准备；5 条本地视频已通过媒体解码检查，但授权记录及样本覆盖尚未核验。见 [采集说明](SAMPLE_COLLECTION.md) 与 [T04 设备 A 记录](verification/T04_DEVICE_A.md) |
 | 两台电脑运行同一套基础校验 | T03 已通过 | 设备 B 实现记录及 [设备 A 独立复现](verification/T03_DEVICE_A.md)；不是完整产品的 T15 验收 |
 
 **T01 完成；G0 整体尚未通过。** T01 的完成不依赖伪造真实样本。首批视频的本地媒体兼容性检查不等于授权和女性主样本验收，尚不进入正式人群评估。
