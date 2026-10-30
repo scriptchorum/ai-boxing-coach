@@ -91,11 +91,12 @@ def normalize_result(result) -> tuple[list[dict], int, str]:
     return points, count, 'single_model_pose'
 
 
-def drawable(point: dict) -> bool:
+def drawable(point: dict, config: dict | None = None) -> bool:
+    config = CONFIG if config is None else config
     image = point['image']
     return bool(image is not None and point['state']=='observed'
-                and point['visibility'] is not None and point['visibility'] >= CONFIG['min_visibility']
-                and point['presence'] is not None and point['presence'] >= CONFIG['min_presence']
+                and point['visibility'] is not None and point['visibility'] >= config['min_visibility']
+                and point['presence'] is not None and point['presence'] >= config['min_presence']
                 and 0 <= image['x'] <= 1 and 0 <= image['y'] <= 1)
 
 
@@ -123,7 +124,7 @@ class PoseRun:
         total = len(self.frames)
         statuses = {name:sum(d['status']==name for d in self.diagnostics)
                     for name in ('no_pose','multiple_poses','single_model_pose')}
-        unavailable = {name:sum(not drawable(f['landmarks'][index]) for f in self.frames)
+        unavailable = {name:sum(not drawable(f['landmarks'][index],self.config) for f in self.frames)
                        for index,name in JOINTS.items()}
         return {'frames':total, **statuses, 'unavailable_joint_frames':unavailable,
                 'elapsed_seconds':round(self.elapsed_seconds,3)}
