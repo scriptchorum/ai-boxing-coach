@@ -88,7 +88,7 @@ git status --short --branch
 
 - `Repository not found`：检查 URL、登录账号和私有仓库访问权限。
 - `Authentication failed`：重新完成 Git 的账号授权；不要公开分享访问令牌。
-- GitHub 网页/插件可用但终端连接失败：检查这台电脑的网络、代理和终端 Git 身份验证。
+- GitHub 网页/插件可用但终端连接失败：先区分 Codex 执行环境的联网限制与电脑网络故障。2026-11-01 设备 A 对同一 GitHub 地址验证：受限命令无法连接，获准联网的命令返回 HTTP 200，随后 `git fetch origin main` 成功。此情形应通过工具的正常网络授权执行 Git；无需修改系统代理、关闭证书校验或重置仓库。获准联网后仍失败，再检查网络、代理和 Git 身份验证。
 - `Author identity unknown`：设置上面的仓库级 user.name/user.email。
 - 视频、模型文件没有同步：默认已被忽略；这些资料需要另行复制或选择专用存储。
 - 另一台电脑的 Codex 不知道进度：确认已 pull，并让其读取 docs/HANDOFF.md。
