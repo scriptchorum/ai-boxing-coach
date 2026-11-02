@@ -15,6 +15,7 @@ def clear_pose():
     st.session_state.pop('pose_index',None)
     st.session_state.pop('pose_reviews',None)
     st.session_state.pop('pose_review_filter',None)
+    st.session_state.pop('review_unrecorded_only',None)
 
 
 def go_review(index):
@@ -124,16 +125,23 @@ def render_pose_panel(video,start,end,mirror):
     st.subheader('快速人工核对')
     st.write('选择要看的画面类型，再点上一个或下一个。重点看骨架是否跟对人、已显示的关节是否明显错位。完整显示的帧也可能识别错。')
     selection=st.selectbox('待核对画面',FILTERS,key='pose_review_filter')
-    indices=review_indices(cached.frames,decisions,selection)
+    matching=review_indices(cached.frames,decisions,selection)
+    reviews=st.session_state.setdefault('pose_reviews',{})
+    remaining=[i for i in matching if i not in reviews]
+    only_unrecorded=st.checkbox('只看未记录帧',key='review_unrecorded_only')
+    indices=remaining if only_unrecorded else matching
+    st.caption(f'此类已记录 {len(matching)-len(remaining)}/{len(matching)} 帧，剩余 {len(remaining)} 帧。记录“无法判断”也算已记录，不代表识别正确。')
     current=st.session_state.get('pose_index',start)
     previous,following=neighbors(indices,current)
     first,prev,nxt=st.columns(3)
     first.button('从第一帧开始核对',key='review_first',disabled=not indices,on_click=go_review,args=(indices[0] if indices else start,))
     prev.button('上一个待核对帧',key='review_prev',disabled=previous is None,on_click=go_review,args=(previous,))
     nxt.button('下一个待核对帧',key='review_next',disabled=following is None,on_click=go_review,args=(following,))
-    if not indices: st.info('所选区间没有符合此筛选条件的帧。可换一种类型，或手动查看任意帧。')
-    else: st.caption(f'此类共 {len(indices)} 帧；当前帧'+('符合筛选。' if current in indices else '不符合筛选，点击按钮跳转。'))
-    st.caption('这些按钮只改变下方静态核对帧，不控制上方连续播放器。')
+    if matching and only_unrecorded and not remaining:
+        st.info('此类帧均已有记录。取消“只看未记录帧”可复查，或切换画面类型继续。')
+    elif not indices: st.info('所选区间没有符合此筛选条件的帧。可换一种类型，或手动查看任意帧。')
+    else: st.caption(f'当前可跳转 {len(indices)} 帧；当前帧'+('符合筛选。' if current in indices else '不符合筛选，点击按钮跳转。'))
+    st.caption('这些按钮只改变下方静态核对帧，不控制上方连续播放器。记录后画面保留，点击前后按钮再跳转；取消筛选可修改已有记录。')
     index = int(st.number_input('骨架核对源帧号',min_value=start,max_value=end,step=1,key='pose_index'))
     pose_frame = cached.frames[index-start]
     diagnostic = cached.diagnostics[index-start]

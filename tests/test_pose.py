@@ -141,6 +141,34 @@ class PoseTests(unittest.TestCase):
         self.assertFalse('pose_reviews' in app.session_state)
         self.assertEqual(len(app.exception),0)
 
+    def test_unrecorded_navigation_completion_and_reopening(self):
+        result=fixture_run(self.video)
+        app=AppTest.from_file(str(ROOT/'app/main.py'),default_timeout=30).run()
+        app.text_input(key='input_path').set_value(str(self.path))
+        app.button(key='FormSubmitter:open_video-打开视频').click().run()
+        with patch('boxing_coach.pose_ui.extract_pose',return_value=result):
+            app.button(key='run_pose').click().run()
+        app.selectbox(key='pose_review_filter').set_value('全部帧').run()
+        app.checkbox(key='review_unrecorded_only').set_value(True).run()
+        for index in range(3):
+            app.button(key='review_first').click().run()
+            self.assertEqual(app.number_input(key='pose_index').value,index)
+            app.button(key='review_mark_3').click().run()
+            self.assertEqual(app.number_input(key='pose_index').value,index)
+        self.assertTrue(app.button(key='review_first').disabled)
+        self.assertTrue(app.button(key='review_prev').disabled)
+        self.assertTrue(app.button(key='review_next').disabled)
+        self.assertTrue(any('此类帧均已有记录' in info.value for info in app.info))
+        app.button(key='review_clear').click().run()
+        self.assertFalse(app.button(key='review_first').disabled)
+        self.assertTrue(any('此类已记录 2/3 帧，剩余 1 帧' in c.value for c in app.caption))
+        app.checkbox(key='review_unrecorded_only').set_value(False).run()
+        app.button(key='review_first').click().run()
+        self.assertEqual(app.number_input(key='pose_index').value,0)
+        app.checkbox(key='mirror').set_value(True).run()
+        self.assertNotIn('review_unrecorded_only',app.session_state)
+        self.assertFalse(app.exception)
+
     def test_review_downloads_follow_current_notes_without_rerun(self):
         import streamlit as st
         from boxing_coach.review import import_reviews
@@ -186,6 +214,13 @@ class PoseTests(unittest.TestCase):
         with patch('boxing_coach.pose_ui.st.file_uploader',return_value=uploaded(export_reviews(result,restored))):
             app.run(); app.button(key='review_import').click().run()
         self.assertEqual(app.session_state.pose_reviews,restored)
+        app.selectbox(key='pose_review_filter').set_value('全部帧').run()
+        app.checkbox(key='review_unrecorded_only').set_value(True).run()
+        app.button(key='review_first').click().run()
+        self.assertEqual(app.number_input(key='pose_index').value,0)
+        app.button(key='review_next').click().run()
+        self.assertEqual(app.number_input(key='pose_index').value,2)
+        self.assertTrue(any('此类已记录 1/3 帧，剩余 2 帧' in c.value for c in app.caption))
         self.assertFalse(app.exception)
 
     def test_player_payload_uses_source_pts_and_only_drawable_points(self):
