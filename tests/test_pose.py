@@ -141,6 +141,33 @@ class PoseTests(unittest.TestCase):
         self.assertFalse('pose_reviews' in app.session_state)
         self.assertEqual(len(app.exception),0)
 
+    def test_review_downloads_follow_current_notes_without_rerun(self):
+        import streamlit as st
+        from boxing_coach.review import import_reviews
+        result=fixture_run(self.video)
+        app=AppTest.from_file(str(ROOT/'app/main.py'),default_timeout=30).run()
+        app.text_input(key='input_path').set_value(str(self.path))
+        app.button(key='FormSubmitter:open_video-打开视频').click().run()
+        with patch('boxing_coach.pose_ui.extract_pose',return_value=result):
+            app.button(key='run_pose').click().run()
+        with patch('boxing_coach.pose_ui.st.download_button',wraps=st.download_button) as download:
+            app.run()
+            self.assertEqual(len(download.call_args_list),2)
+            self.assertTrue(all(c.kwargs['disabled'] for c in download.call_args_list))
+            download.reset_mock()
+            app.button(key='review_mark_3').click().run()
+            self.assertEqual({c.kwargs['key'] for c in download.call_args_list},
+                             {'review_download','review_download_inline'})
+            for call in download.call_args_list:
+                self.assertFalse(call.kwargs['disabled'])
+                self.assertEqual(call.kwargs['on_click'],'ignore')
+                self.assertEqual(import_reviews(result,call.kwargs['data']),{0:'无法判断'})
+            download.reset_mock()
+            app.button(key='review_clear').click().run()
+            self.assertTrue(all(c.kwargs['disabled'] for c in download.call_args_list))
+            self.assertTrue(all(import_reviews(result,c.kwargs['data'])=={} for c in download.call_args_list))
+        self.assertFalse(app.exception)
+
     def test_review_import_replaces_only_after_validation(self):
         from boxing_coach.review import export_reviews
         result=fixture_run(self.video)

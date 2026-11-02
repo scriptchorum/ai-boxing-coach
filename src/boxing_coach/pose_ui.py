@@ -34,10 +34,22 @@ def render_side_legend():
     st.caption('左右指训练者身体的模型标签，不是画面左右，也不代表惯用手或前后手。镜像纠正后颜色仍跟随同一标签；重叠不代表识别错误，模型也可能把左右认反，需对照原片。')
 
 
+def render_review_download(cached, *, key):
+    reviews=st.session_state.setdefault('pose_reviews',{})
+    if reviews:
+        st.caption(f'当前有 {len(reviews)} 帧核对记录。记录只在本次会话中；请下载后再刷新、换片或重新识别。')
+    else:
+        st.caption('先在“快速人工核对”记录至少一帧，再下载保存。')
+    st.download_button('下载本次核对记录',data=export_reviews(cached,reviews),
+                       file_name='boxing-display-review.private.json',mime='application/json',
+                       key=key,disabled=not reviews,on_click='ignore')
+
+
 def render_review_files(cached):
     with st.expander('保存或恢复人工核对记录'):
         st.caption('文件仅含帧号、你的判断和匹配标识，不含视频或骨架坐标。仍属于私人训练记录，请仅保存在受控目录，不加入 Git。刷新前请先下载；另一台需准备同一原片和相同识别设置。')
-        uploaded=st.file_uploader('选择之前保存的核对记录',type=['json'],key='review_import_file')
+        st.caption(f'当前选段：源帧 {cached.start}–{cached.end}（含两端）；镜像纠正：'+('开启' if cached.mirror else '关闭')+'。恢复时需使用相同设置。')
+        uploaded=st.file_uploader('选择之前保存的核对记录',type=['json'],key='review_import_file',max_upload_size=1)
         if st.button('导入并替换当前核对记录',key='review_import',disabled=uploaded is None):
             try:
                 if uploaded.size>MAX_REVIEW_BYTES: raise ValueError('核对文件超过 1 MiB，未导入。')
@@ -47,10 +59,7 @@ def render_review_files(cached):
             else:
                 st.session_state.pose_reviews=restored
                 st.success(f'已恢复 {len(restored)} 帧记录；原视频和识别结果未修改。')
-        reviews=st.session_state.setdefault('pose_reviews',{})
-        st.download_button('下载本次核对记录',data=export_reviews(cached,reviews),
-                           file_name='boxing-display-review.private.json',mime='application/json',
-                           key='review_download',disabled=not reviews)
+        render_review_download(cached,key='review_download')
 
 
 def render_pose_panel(video,start,end,mirror):
@@ -154,6 +163,7 @@ def render_pose_panel(video,start,end,mirror):
         columns[n%2].button(verdict,key=f'review_mark_{n}',on_click=record_review,args=(index,verdict),disabled=not decision['show'] and verdict!='无法判断')
     st.button('清除此帧记录',key='review_clear',on_click=record_review,args=(index,'未记录'))
     st.caption(f'本次已记录 {len(reviews)}/{len(cached.frames)} 帧；点过下一帧不会自动算已核对。不是准确率或专业标注。')
+    render_review_download(cached,key='review_download_inline')
     with st.expander('此帧关键点与运行信息'):
         st.dataframe([{'关键点':name,'绘制':idx in decision['allowed_indices'],
                        'visibility':pose_frame['landmarks'][idx]['visibility'],
