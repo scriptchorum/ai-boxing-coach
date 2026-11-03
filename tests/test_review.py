@@ -79,3 +79,25 @@ class ReviewTests(unittest.TestCase):
         self.assertEqual(neighbors([10,20],15),(10,20))
         self.assertEqual(neighbors([10,20],20),(10,None))
         self.assertEqual(neighbors([10],10),(None,None))
+
+    def test_review_summary_is_aggregate_and_flags_unrejected_issue(self):
+        import json
+        from boxing_coach.review import summarize_reviews
+        run=self.sample_run()
+        summary=summarize_reviews(run,{50:'跟错人或落在器械上'})
+        self.assertEqual(summary['reviewed_frames'],1)
+        self.assertEqual(summary['total_frames'],1)
+        self.assertEqual(summary['problem_frames'],1)
+        self.assertEqual(summary['display_counts'],{'完整显示':1,'部分显示':0,'全部隐藏':0})
+        self.assertEqual(summary['issue_reason_counts'],{'no_display_rule_reason':1})
+        encoded=json.dumps(summary,ensure_ascii=False)
+        self.assertNotIn(run.key,encoded)
+        self.assertNotIn('source_frame_index',encoded)
+        self.assertNotIn('landmarks',encoded)
+
+    def test_review_summary_rejects_invalid_session_state(self):
+        from boxing_coach.review import summarize_reviews
+        run=self.sample_run()
+        for reviews in ({51:'无法判断'},{50:'动作优秀'},[]):
+            with self.subTest(reviews=reviews),self.assertRaises(ValueError):
+                summarize_reviews(run,reviews)

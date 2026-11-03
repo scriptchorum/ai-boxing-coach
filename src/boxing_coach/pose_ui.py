@@ -7,7 +7,7 @@ from .preview import read_preview_frame
 from .video_io import MediaInputError
 from .synced_player import render_synced_player
 from .quality import assess_frames, reason_text, display_frame, VERSION, LABELS
-from .review import FILTERS, VERDICTS, review_indices, neighbors, export_reviews, import_reviews, read_review_file, MAX_REVIEW_BYTES
+from .review import FILTERS, VERDICTS, review_indices, neighbors, summarize_reviews, export_reviews, import_reviews, read_review_file, MAX_REVIEW_BYTES
 
 
 def clear_pose():
@@ -153,6 +153,18 @@ def render_pose_panel(video,start,end,mirror):
             st.button('查看所选问题帧',key='review_issue_jump',on_click=go_review,args=(selected,))
         else:
             st.caption('目前没有标记这两类问题的帧。')
+    review_summary=summarize_reviews(cached,reviews)
+    with st.expander('查看人工核对汇总'):
+        st.caption(f"已记录 {review_summary['reviewed_frames']}/{review_summary['total_frames']} 帧；其中显示问题 {review_summary['problem_frames']} 帧。下列数量只是人工操作记录，不是准确率或专业标注。")
+        st.dataframe([{'\u4eba工判断':verdict,'\u5e27数':count}
+                      for verdict,count in review_summary['verdict_counts'].items()],hide_index=True)
+        st.dataframe([{'\u8bb0录时的显示状态':state,'\u5e27数':count}
+                      for state,count in review_summary['display_counts'].items()],hide_index=True)
+        if review_summary['issue_reason_counts']:
+            st.write('显示问题帧与当前工程规则的对照：')
+            st.dataframe([{'\u5f53前规则原因':LABELS.get(code,'未触发当前隐藏原因'),'\u5e27数':count}
+                          for code,count in review_summary['issue_reason_counts'].items()],hide_index=True)
+            st.caption('同一帧可同时触发多个原因，各项不能直接相加；“未触发”表示人工看到问题时，当前规则没有将该帧拒绝。')
     st.write('选择要看的画面类型，再点上一个或下一个。重点看骨架是否跟对人、已显示的关节是否明显错位。完整显示的帧也可能识别错。')
     selection=st.selectbox('待核对画面',FILTERS,key='pose_review_filter')
     matching=review_indices(cached.frames,decisions,selection)
