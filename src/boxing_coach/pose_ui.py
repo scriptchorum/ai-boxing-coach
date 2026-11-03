@@ -38,7 +38,7 @@ def render_side_legend():
 def render_review_download(cached, *, key):
     reviews=st.session_state.setdefault('pose_reviews',{})
     if reviews:
-        st.caption(f'当前有 {len(reviews)} 帧核对记录。记录只在本次会话中；请下载后再刷新、换片或重新识别。')
+        st.caption(f'当前会话已记录 {len(reviews)} 帧。想在刷新后或另一台电脑继续时，可将这些判断备份为本地文件。')
     else:
         st.caption('先在“快速人工核对”记录至少一帧，再下载保存。')
     st.download_button('下载本次核对记录',data=export_reviews(cached,reviews),
@@ -143,10 +143,19 @@ def render_pose_panel(video,start,end,mirror):
     st.dataframe([{'关键点':name,'未满足绘制条件的帧数':count,'总帧数':summary['frames']}
                   for name,count in summary['unavailable_joint_frames'].items()],hide_index=True)
     st.subheader('快速人工核对')
+    reviews=st.session_state.setdefault('pose_reviews',{})
+    wrong_target,misaligned=VERDICTS[2:4]
+    problem_frames=sorted(i for i,v in reviews.items() if v in (wrong_target,misaligned))
+    with st.expander('复查已标记的显示问题'):
+        st.caption(f'当前选段的人工记录中，跟错人或落在器械上 {sum(v==wrong_target for v in reviews.values())} 帧，关节明显错位 {sum(v==misaligned for v in reviews.values())} 帧。')
+        if problem_frames:
+            selected=st.selectbox('选择问题帧',problem_frames,format_func=lambda i:f'源帧 {i} · {reviews[i]}')
+            st.button('查看所选问题帧',key='review_issue_jump',on_click=go_review,args=(selected,))
+        else:
+            st.caption('目前没有标记这两类问题的帧。')
     st.write('选择要看的画面类型，再点上一个或下一个。重点看骨架是否跟对人、已显示的关节是否明显错位。完整显示的帧也可能识别错。')
     selection=st.selectbox('待核对画面',FILTERS,key='pose_review_filter')
     matching=review_indices(cached.frames,decisions,selection)
-    reviews=st.session_state.setdefault('pose_reviews',{})
     remaining=[i for i in matching if i not in reviews]
     only_unrecorded=st.checkbox('只看未记录帧',key='review_unrecorded_only')
     indices=remaining if only_unrecorded else matching
