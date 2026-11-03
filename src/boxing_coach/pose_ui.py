@@ -7,7 +7,7 @@ from .preview import read_preview_frame
 from .video_io import MediaInputError
 from .synced_player import render_synced_player
 from .quality import assess_frames, reason_text, display_frame, VERSION, LABELS
-from .review import FILTERS, VERDICTS, review_indices, neighbors, export_reviews, import_reviews, MAX_REVIEW_BYTES
+from .review import FILTERS, VERDICTS, review_indices, neighbors, export_reviews, import_reviews, read_review_file, MAX_REVIEW_BYTES
 
 
 def clear_pose():
@@ -46,11 +46,30 @@ def render_review_download(cached, *, key):
                        key=key,disabled=not reviews,on_click='ignore')
 
 
-def render_review_files(cached):
-    with st.expander('保存或恢复人工核对记录'):
-        st.caption('文件仅含帧号、你的判断和匹配标识，不含视频或骨架坐标。仍属于私人训练记录，请仅保存在受控目录，不加入 Git。刷新前请先下载；另一台需准备同一原片和相同识别设置。')
-        st.caption(f'当前选段：源帧 {cached.start}–{cached.end}（含两端）；镜像纠正：'+('开启' if cached.mirror else '关闭')+'。恢复时需使用相同设置。')
+def render_review_restore_hint():
+    with st.expander('从核对文件查看原选段和镜像设置（可选）'):
         uploaded=st.file_uploader('选择之前保存的核对记录',type=['json'],key='review_import_file',max_upload_size=1)
+        if uploaded is not None:
+            try:
+                if uploaded.size>MAX_REVIEW_BYTES: raise ValueError('核对文件超过 1 MiB，未导入。')
+                payload=read_review_file(uploaded.getvalue())
+            except ValueError as exc:
+                st.error(str(exc))
+            else:
+                settings=payload.get('settings')
+                if settings is None:
+                    st.info('这是旧版记录，没有保存选段和镜像设置。请按原设置识别，仍可导入。')
+                else:
+                    st.info(f"文件记录的源帧：{settings['start_frame']}–{settings['end_frame']}（含两端）；镜像纠正："+('开启' if settings['mirror'] else '关闭')+'。')
+                st.caption('这里只读取设置提示，不自动切换视频、修改设置或启动识别。请打开同一原片，按提示选择区间与镜像；识别后在保存/恢复区点击导入，系统仍会检查是否匹配。')
+    return uploaded
+
+
+def render_review_files(cached,uploaded):
+    with st.expander('保存或恢复人工核对记录'):
+        st.caption('文件含帧号、你的判断、选段、镜像设置和匹配标识，不含视频或骨架坐标。仍属于私人训练记录，请仅保存在受控目录，不加入 Git。刷新前请先下载；另一台需准备同一原片和相同识别设置。')
+        st.caption(f'当前选段：源帧 {cached.start}–{cached.end}（含两端）；镜像纠正：'+('开启' if cached.mirror else '关闭')+'。恢复时需使用相同设置。')
+        if uploaded is None: st.caption('要恢复记录，请先在上方“从核对文件查看原选段和镜像设置”选择文件。')
         if st.button('导入并替换当前核对记录',key='review_import',disabled=uploaded is None):
             try:
                 if uploaded.size>MAX_REVIEW_BYTES: raise ValueError('核对文件超过 1 MiB，未导入。')
@@ -68,6 +87,7 @@ def render_pose_panel(video,start,end,mirror):
     st.write('先点击下方“识别所选区间的人体关键点”，完成后播放器会出现在这里。刷新或换片后需要重新识别。')
     st.write('对上方所选区间运行本地模型，再逐帧核对肩、肘、腕、髋、膝与踝。结果只保留在当前会话，不上传或写入训练历史。')
     st.caption('目前是工程试跑：模型信号不等于识别准确率，也不表示动作正确。女性身体多样性的正式验证仍待完成。每次最多 30 秒、1800 帧。')
+    uploaded=render_review_restore_hint()
     try:
         key = run_key(video,start,end,mirror)
     except (AssetError,OSError):
@@ -97,7 +117,7 @@ def render_pose_panel(video,start,end,mirror):
         st.info('尚未生成骨架。点击上方识别按钮，等待处理完成后即可播放。')
         return
     st.button('清除本次关键点结果',on_click=clear_pose)
-    render_review_files(cached)
+    render_review_files(cached,uploaded)
     decisions = assess_frames(cached)
     st.info(f"分部位显示：{sum(not d['show'] for d in decisions)} 帧全部隐藏，{sum(d['show'] and bool(d['hidden_parts']) for d in decisions)} 帧仅显示部分身体，共 {len(decisions)} 帧。隐藏不表示动作错误，未隐藏也不证明识别准确。")
     st.caption('躯干定位不足、多人或位置突变时全部隐藏；否则分别检查左右手臂和腿，缺一处不再让其他部位一起消失。这是待验证规则，不能认人，也不能排除背景人物或器械误检。')

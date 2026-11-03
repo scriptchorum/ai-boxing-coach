@@ -25,25 +25,62 @@ def neighbors(indices,current):
             next((i for i in indices if i>current),None))
 
 def export_reviews(run,reviews):
-    payload={'format':'boxing-display-review-1','run_key':run.key,
+    payload={'format':'boxing-display-review-2','run_key':run.key,
              'quality_version':VERSION,
+             'settings':{'start_frame':run.start,'end_frame':run.end,'mirror':run.mirror},
              'records':[{'frame':i,'verdict':v} for i,v in sorted(reviews.items())]}
     data=json.dumps(payload,ensure_ascii=False,indent=2).encode('utf-8')
     import_reviews(run,data)  # The same validation guards both directions.
     return data
 
-def import_reviews(run,data):
-    """Read bounded JSON data only, never paths or executable object formats."""
+def read_review_file(data):
+    """Validate a bounded document before showing its untrusted settings."""
     if len(data)>MAX_REVIEW_BYTES:
         raise ValueError('核对文件超过 1 MiB，未导入。')
     try:
         payload=json.loads(data.decode('utf-8'))
     except (ValueError,UnicodeError,RecursionError) as exc:
         raise ValueError('核对文件不是有效的 UTF-8 JSON，未导入。') from exc
-    if not isinstance(payload,dict) or set(payload)!= {'format','run_key','quality_version','records'}:
+    if not isinstance(payload,dict):
         raise ValueError('核对文件结构不受支持，未导入。')
-    if payload['format']!='boxing-display-review-1':
+    if payload.get('format') not in ('boxing-display-review-1','boxing-display-review-2'):
         raise ValueError('核对文件版本不受支持，未导入。')
+    fields={'format','run_key','quality_version','records'}
+    settings=None
+    if payload['format']=='boxing-display-review-2':
+        fields.add('settings')
+        settings=payload.get('settings')
+        if not isinstance(settings,dict) or set(settings)!={'start_frame','end_frame','mirror'}:
+            raise ValueError('核对文件的恢复设置不合法，未导入。')
+        start,end=settings['start_frame'],settings['end_frame']
+        if (type(start) is not int or type(end) is not int or
+                not 0<=start<=end<20000 or end-start+1>1800 or type(settings['mirror']) is not bool):
+            raise ValueError('核对文件的恢复设置不合法，未导入。')
+    if (set(payload)!=fields or not isinstance(payload['run_key'],str) or
+            not isinstance(payload['quality_version'],str)):
+        raise ValueError('核对文件结构不受支持，未导入。')
+    records=payload['records']
+    if not isinstance(records,list) or len(records)>1800:
+        raise ValueError('核对记录数量不合法，未导入。')
+    seen=set()
+    for row in records:
+        if not isinstance(row,dict) or set(row)!={'frame','verdict'}:
+            raise ValueError('核对记录结构不合法，未导入。')
+        index=row['frame']
+        if (type(index) is not int or not 0<=index<20000 or index in seen or
+                row['verdict'] not in VERDICTS[1:] or
+                (settings is not None and not settings['start_frame']<=index<=settings['end_frame'])):
+            raise ValueError('帧号重复、超出选段或记录类型不合法，未导入。')
+        seen.add(index)
+    return payload
+
+
+def import_reviews(run,data):
+    """Settings are hints, never a replacement for the full run identity check."""
+    payload=read_review_file(data)
+    if payload.get('settings') is not None and payload['settings']!={
+            'start_frame':run.start,'end_frame':run.end,'mirror':run.mirror}:
+        raise ValueError('文件中的选段或镜像设置与当前识别不一致，未导入。')
     if payload['run_key']!=run.key or payload['quality_version']!=VERSION:
         raise ValueError('文件与当前视频、选段、镜像、模型或显示规则不一致，未导入。请恢复原设置并重新识别。')
     records=payload['records']

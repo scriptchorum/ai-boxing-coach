@@ -6,7 +6,7 @@ class ReviewTests(unittest.TestCase):
         from types import SimpleNamespace
         from test_quality import frame
         f=frame(0); f['source_frame_index']=50
-        return SimpleNamespace(key='synthetic-run',frames=[f],diagnostics=[{'status':'single_model_pose'}])
+        return SimpleNamespace(key='synthetic-run',start=50,end=50,mirror=False,frames=[f],diagnostics=[{'status':'single_model_pose'}])
 
     def test_review_file_roundtrip_and_matching_identity(self):
         from boxing_coach.review import export_reviews,import_reviews,VERDICTS
@@ -16,6 +16,33 @@ class ReviewTests(unittest.TestCase):
         self.assertNotIn(b'landmarks',encoded)
         r.key='different-video-or-settings'
         with self.assertRaises(ValueError): import_reviews(r,encoded)
+
+    def test_settings_preview_and_legacy_import(self):
+        import json
+        from boxing_coach.review import export_reviews,import_reviews,read_review_file
+        run=self.sample_run()
+        payload=read_review_file(export_reviews(run,{50:'无法判断'}))
+        self.assertEqual(payload['settings'],{'start_frame':50,'end_frame':50,'mirror':False})
+        self.assertEqual(set(payload),{'format','settings','run_key','quality_version','records'})
+        payload.pop('settings'); payload['format']='boxing-display-review-1'
+        old=json.dumps(payload).encode()
+        self.assertNotIn('settings',read_review_file(old))
+        self.assertEqual(import_reviews(run,old),{50:'无法判断'})
+
+    def test_settings_reject_malformed_and_mismatched_hints(self):
+        import json
+        from boxing_coach.review import export_reviews,import_reviews,read_review_file
+        run=self.sample_run(); payload=json.loads(export_reviews(run,{50:'无法判断'}))
+        for changes in ({'start_frame':True},{'end_frame':49},{'end_frame':20000},
+                        {'end_frame':1850},{'mirror':'false'},{'path':'private-video.mp4'},
+                        {'start_frame':51,'end_frame':52}):
+            altered={**payload,'settings':{**payload['settings'],**changes}}
+            with self.subTest(changes=changes),self.assertRaises(ValueError):
+                read_review_file(json.dumps(altered).encode())
+        for changes in ({'mirror':True},{'end_frame':51}):
+            altered={**payload,'settings':{**payload['settings'],**changes}}
+            with self.subTest(changes=changes),self.assertRaises(ValueError):
+                import_reviews(run,json.dumps(altered).encode())
 
     def test_review_file_rejects_bad_size_schema_frames_and_rules(self):
         import json

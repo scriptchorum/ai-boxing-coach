@@ -223,6 +223,23 @@ class PoseTests(unittest.TestCase):
         self.assertTrue(any('此类已记录 1/3 帧，剩余 2 帧' in c.value for c in app.caption))
         self.assertFalse(app.exception)
 
+    def test_restore_hints_before_inference_do_not_apply_settings(self):
+        from boxing_coach.review import export_reviews
+        result=fixture_run(self.video,start=1,end=2,mirror=True)
+        data=export_reviews(result,{1:'无法判断'})
+        uploaded=SimpleNamespace(size=len(data),getvalue=lambda:data)
+        app=AppTest.from_file(str(ROOT/'app/main.py'),default_timeout=30).run()
+        app.text_input(key='input_path').set_value(str(self.path))
+        with patch('boxing_coach.pose_ui.st.file_uploader',return_value=uploaded), \
+                patch('boxing_coach.pose_ui.extract_pose') as extract:
+            app.button(key='FormSubmitter:open_video-打开视频').click().run()
+            self.assertTrue(any('文件记录的源帧：1–2' in info.value and '开启' in info.value for info in app.info))
+            self.assertEqual(app.number_input(key='start_frame').value,0)
+            self.assertFalse(app.checkbox(key='mirror').value)
+            extract.assert_not_called()
+            self.assertNotIn('pose_run',app.session_state)
+        self.assertFalse(app.exception)
+
     def test_player_payload_uses_source_pts_and_only_drawable_points(self):
         import struct
         from dataclasses import replace
