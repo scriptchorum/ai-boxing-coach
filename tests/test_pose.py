@@ -260,6 +260,9 @@ class PoseTests(unittest.TestCase):
         app.button(key='demo_evidence_remove').click().run()
         self.assertEqual(sorted(app.session_state.pose_demo_frames),[0])
         self.assertNotIn('pose_demo_report',app.session_state)
+        next(button for button in app.button if button.label=='关闭当前视频').click().run()
+        for key in ('pose_evidence_bundle','pose_demo_frames','pose_demo_report'):
+            self.assertNotIn(key,app.session_state)
         self.assertFalse(app.exception)
 
     def test_review_import_replaces_only_after_validation(self):

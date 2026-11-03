@@ -2,6 +2,16 @@
 
 更新日期：2026-11-03，Asia/Shanghai。
 
+## 设备 A T07 合成浏览器报告验收与会话清理：2026-11-03
+
+本阶段在实际 Streamlit 页面用临时生成的 5 帧 H.264/MP4 完成固定模型试跑。合成片没有人体，5 帧均按 `no_pose` 全部隐藏；这只验证本地流程和拒绝状态，不是识别效果证据。页面中先后准备源帧 0、1 的私人证据包，手动加入 Demo 报告并实际下载 `boxing-demo-report.private.zip`。下载包为 3,924 字节，解压后包含两组 source/overlay PNG、`manifest.json`、`README.txt` 和 `report.html`。
+
+实际下载物通过 `demo-report.schema.json`，manifest 声明的 6 个文件 SHA-256 全部与落盘内容一致；`frame_count` 为 2，HTML 含源帧 0、1 且不含 `<script>`。Codex 内置浏览器的安全策略禁止访问 `file://`，本轮没有尝试绕过，因此这里只完成了解压与静态离线文件验证，尚未在该浏览器渲染 HTML；普通本地浏览器目视仍可后补。下载 ZIP 与解压目录位于未跟踪的本机私有位置，不进入 Git。
+
+浏览器流程同时暴露出“关闭当前视频”未清除 `pose_evidence_bundle`、`pose_demo_frames` 和 `pose_demo_report` 的会话残留。现已统一清除，并在实际页面确认关闭后证据/报告控件消失；AppTest 增加相同回归断言。全套 108 项 Python、10 项播放器测试和 `pip check` 通过，Streamlit 只有裸测试模式下已知的上下文警告。
+
+T07 保持 Doing：没有真人视频、G1、女性内部覆盖、用户逐帧原片对照或普通浏览器的离线 HTML 目视证据。设备 A 已收工释放；后续继续前须同步并重新认领。用户实际工时未登记。
+
 ## 设备 A T07 本地 Demo 报告框架：2026-11-03
 
 本阶段增加 `boxing-demo-report-1`。用户先在静态核对区准备当前证据帧，再手动加入本次 Demo 报告；会话最多选择 8 帧。点击准备报告后，本机生成私人 ZIP，包含可离线打开的 `report.html`、严格 `manifest.json`、`README.txt` 和每帧成对的显示图/过滤后骨架图。加入、移除或清空帧会让旧报告失效；应用不自动挑帧、上传文件或写入历史。
