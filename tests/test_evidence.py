@@ -11,7 +11,8 @@ import numpy as np
 from jsonschema import Draft202012Validator
 from PIL import Image
 
-from boxing_coach.evidence import EvidenceError, build_evidence_bundle
+from boxing_coach.evidence import (EvidenceError, MAX_DEMO_FRAMES, build_demo_report,
+                                   build_evidence_bundle, read_evidence_bundle)
 
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -39,6 +40,25 @@ def unpack(data):
         names=archive.namelist()
         files={name:archive.read(name) for name in names}
     return names,files,json.loads(files['manifest.json'])
+
+
+def multi_bundles(*,run_key='a'*64):
+    run,_,_,decision,source,overlay=fixture()
+    frames=[{'source_frame_index':7,'timestamp_ms':233.333,'landmarks':[]},
+            {'source_frame_index':8,'timestamp_ms':266.666,'landmarks':[]}]
+    diagnostics=[{'source_frame_index':7,'engine_timestamp_ms':233,
+                  'detected_count_capped':1,'status':'single_model_pose'},
+                 {'source_frame_index':8,'engine_timestamp_ms':267,
+                  'detected_count_capped':1,'status':'single_model_pose'}]
+    run.key=run_key; run.start=7; run.end=8; run.frames=frames; run.diagnostics=diagnostics
+    bundles=[]
+    for position in range(2):
+        current_source=source.copy(); current_source[0,1,0]=position
+        current_overlay=overlay.copy(); current_overlay[0,1,0]=position
+        bundles.append(build_evidence_bundle(
+            run,frames[position],diagnostics[position],decision,current_source,current_overlay,
+            source_timestamp_ms=frames[position]['timestamp_ms']))
+    return bundles
 
 
 class EvidenceBundleTests(unittest.TestCase):
@@ -100,6 +120,53 @@ class EvidenceBundleTests(unittest.TestCase):
             with self.assertRaises(EvidenceError):
                 build_evidence_bundle(changed_run,changed_run.frames[0],changed_diagnostic,
                                       changed_decision,source,overlay,source_timestamp_ms=233.333)
+
+    def test_demo_report_sorts_frames_and_has_verifiable_offline_files(self):
+        bundles=multi_bundles()
+        first=build_demo_report(list(reversed(bundles)))
+        second=build_demo_report(bundles)
+        self.assertEqual(first,second)
+        names,files,manifest=unpack(first)
+        self.assertEqual(names[:3],['manifest.json','report.html','README.txt'])
+        self.assertEqual(names[3:],[
+            'frames/000/source.png','frames/000/overlay.png',
+            'frames/001/source.png','frames/001/overlay.png'])
+        schema=json.loads((ROOT/'schemas/demo-report.schema.json').read_text(encoding='utf-8'))
+        Draft202012Validator.check_schema(schema)
+        Draft202012Validator(schema).validate(manifest)
+        self.assertEqual(manifest['frame_count'],2)
+        self.assertEqual([frame['source_frame_index'] for frame in manifest['frames']],[7,8])
+        self.assertEqual(manifest['files']['report']['sha256'],sha256(files['report.html']).hexdigest())
+        self.assertEqual(manifest['files']['readme']['sha256'],sha256(files['README.txt']).hexdigest())
+        for frame in manifest['frames']:
+            for image in frame['files'].values():
+                self.assertEqual(image['sha256'],sha256(files[image['name']]).hexdigest())
+        html=files['report.html'].decode('utf-8')
+        self.assertIn('源帧 7',html)
+        self.assertIn('源帧 8',html)
+        self.assertNotIn('<script',html.lower())
+        serialized=json.dumps(manifest,ensure_ascii=False)
+        for forbidden in ('path','landmarks','coordinates','action_score','verdict'):
+            self.assertNotIn(forbidden,serialized)
+
+    def test_demo_report_rejects_duplicates_mixed_runs_and_tampering(self):
+        first,second=multi_bundles()
+        other=multi_bundles(run_key='c'*64)[0]
+        for bundles in ([first,first],[first,other],[first]*(MAX_DEMO_FRAMES+1)):
+            with self.subTest(count=len(bundles)),self.assertRaises(EvidenceError):
+                build_demo_report(bundles)
+
+        names,files,manifest=unpack(first)
+        manifest['private_path']=r'C:\\private\\person.mp4'
+        output=BytesIO()
+        with ZipFile(output,'w') as archive:
+            archive.writestr('manifest.json',json.dumps(manifest).encode())
+            archive.writestr('source.png',files['source.png'])
+            archive.writestr('overlay.png',files['overlay.png'])
+        with self.assertRaises(EvidenceError): read_evidence_bundle(output.getvalue())
+
+        damaged=bytearray(first); damaged[-8:]=b'not-a-zip'
+        with self.assertRaises(EvidenceError): read_evidence_bundle(bytes(damaged))
 
 
 if __name__ == '__main__':

@@ -230,6 +230,38 @@ class PoseTests(unittest.TestCase):
         self.assertNotIn('pose_evidence_bundle',app.session_state)
         self.assertFalse(app.exception)
 
+    def test_local_demo_report_uses_only_manually_added_frames(self):
+        import streamlit as st
+        from test_evidence import unpack
+        result=fixture_run(self.video)
+        app=AppTest.from_file(str(ROOT/'app/main.py'),default_timeout=30).run()
+        app.text_input(key='input_path').set_value(str(self.path))
+        app.button(key='FormSubmitter:open_video-打开视频').click().run()
+        with patch('boxing_coach.pose_ui.extract_pose',return_value=result):
+            app.button(key='run_pose').click().run()
+        self.assertNotIn('pose_demo_frames',app.session_state)
+        app.button(key='evidence_prepare').click().run()
+        app.button(key='demo_evidence_add').click().run()
+        self.assertEqual(sorted(app.session_state.pose_demo_frames),[0])
+        app.number_input(key='pose_index').set_value(1).run()
+        app.button(key='evidence_prepare').click().run()
+        app.button(key='demo_evidence_add').click().run()
+        self.assertEqual(sorted(app.session_state.pose_demo_frames),[0,1])
+        self.assertNotIn('pose_demo_report',app.session_state)
+        with patch('boxing_coach.pose_ui.st.download_button',wraps=st.download_button) as download:
+            app.button(key='demo_report_prepare').click().run()
+            reports=[call for call in download.call_args_list
+                     if call.kwargs['key']=='demo_report_download']
+            self.assertEqual(len(reports),1)
+            self.assertEqual(reports[0].kwargs['on_click'],'ignore')
+            self.assertEqual(reports[0].kwargs['file_name'],'boxing-demo-report.private.zip')
+            _,_,manifest=unpack(reports[0].kwargs['data'])
+            self.assertEqual([frame['source_frame_index'] for frame in manifest['frames']],[0,1])
+        app.button(key='demo_evidence_remove').click().run()
+        self.assertEqual(sorted(app.session_state.pose_demo_frames),[0])
+        self.assertNotIn('pose_demo_report',app.session_state)
+        self.assertFalse(app.exception)
+
     def test_review_import_replaces_only_after_validation(self):
         from boxing_coach.review import export_reviews
         result=fixture_run(self.video)

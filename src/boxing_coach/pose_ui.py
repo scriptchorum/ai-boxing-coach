@@ -8,7 +8,7 @@ from .video_io import MediaInputError
 from .synced_player import render_synced_player
 from .quality import assess_frames, reason_text, display_frame, VERSION, LABELS
 from .review import FILTERS, VERDICTS, review_indices, neighbors, summarize_reviews, export_reviews, import_reviews, read_review_file, MAX_REVIEW_BYTES
-from .evidence import EvidenceError, build_evidence_bundle
+from .evidence import EvidenceError, MAX_DEMO_FRAMES, build_demo_report, build_evidence_bundle
 
 
 def clear_pose():
@@ -18,6 +18,8 @@ def clear_pose():
     st.session_state.pop('pose_review_filter',None)
     st.session_state.pop('review_unrecorded_only',None)
     st.session_state.pop('pose_evidence_bundle',None)
+    st.session_state.pop('pose_demo_frames',None)
+    st.session_state.pop('pose_demo_report',None)
 
 
 def go_review(index):
@@ -46,6 +48,49 @@ def render_review_download(cached, *, key):
     st.download_button('下载本次核对记录',data=export_reviews(cached,reviews),
                        file_name='boxing-display-review.private.json',mime='application/json',
                        key=key,disabled=not reviews,on_click='ignore')
+
+
+def render_demo_report(cached, prepared, index):
+    with st.expander(f'本地 Demo 报告（手动选择，最多 {MAX_DEMO_FRAMES} 帧）'):
+        frames=st.session_state.get('pose_demo_frames',{})
+        if not isinstance(frames,dict):
+            frames={}
+            st.session_state.pop('pose_demo_frames',None)
+        if prepared is not None:
+            if st.button('将当前证据帧加入 Demo 报告',key='demo_evidence_add',
+                         disabled=index in frames or len(frames) >= MAX_DEMO_FRAMES):
+                frames[index]=prepared['data']
+                st.session_state.pose_demo_frames=frames
+                st.session_state.pop('pose_demo_report',None)
+        if index in frames and st.button('从 Demo 报告移除当前帧',key='demo_evidence_remove'):
+            frames.pop(index)
+            if not frames: st.session_state.pop('pose_demo_frames',None)
+            st.session_state.pop('pose_demo_report',None)
+        if st.button('清空 Demo 报告帧',key='demo_report_clear',disabled=not frames):
+            frames.clear()
+            st.session_state.pop('pose_demo_frames',None)
+            st.session_state.pop('pose_demo_report',None)
+        selected=sorted(frames)
+        st.caption('已手动选择 '+('、'.join(map(str,selected)) if selected else '0')+
+                   f' 个源帧（{len(selected)}/{MAX_DEMO_FRAMES}）。不会自动挑帧或判断动作。')
+        report_key=(cached.key,tuple(selected))
+        report=st.session_state.get('pose_demo_report')
+        if report is not None and report['key'] != report_key:
+            st.session_state.pop('pose_demo_report',None)
+            report=None
+        if st.button('准备本地 Demo 报告',key='demo_report_prepare',disabled=not frames):
+            try:
+                data=build_demo_report([frames[source_index] for source_index in sorted(frames)])
+            except EvidenceError:
+                st.error('所选证据帧不一致或已损坏，未生成报告；请清空后重新准备。')
+            else:
+                report={'key':report_key,'data':data}
+                st.session_state.pose_demo_report=report
+        if report is not None:
+            st.download_button('下载本地 Demo 报告（私人 ZIP）',data=report['data'],
+                               file_name='boxing-demo-report.private.zip',mime='application/zip',
+                               key='demo_report_download',on_click='ignore')
+        st.caption('报告含所选显示帧与模型骨架。请仅保存在受控目录，不要加入 Git 或公开分享；它不是动作评分、准确率或教练结论。')
 
 
 def render_review_restore_hint():
@@ -228,6 +273,7 @@ def render_pose_panel(video,start,end,mirror):
                            file_name='boxing-evidence-frame.private.zip',mime='application/zip',
                            key='evidence_download',on_click='ignore')
         st.caption('该 ZIP 含视频画面和模型骨架，属于私人训练资料；请保存在受控目录，不要加入 Git 或公开分享。')
+    render_demo_report(cached,prepared,index)
     reviews=st.session_state.setdefault('pose_reviews',{})
     st.write('此帧人工记录：'+reviews.get(index,'未记录'))
     st.caption('只记录显示情况，不判断拳术动作对错；全部隐藏时请选择“无法判断”。会话记录刷新、重识别或换片会清除；可在上方“保存或恢复人工核对记录”手动下载备份，不自动上传。')
