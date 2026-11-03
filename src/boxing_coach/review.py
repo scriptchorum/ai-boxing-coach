@@ -3,11 +3,23 @@ import json
 from .quality import VERSION, assess_frames
 
 MAX_REVIEW_BYTES = 1024 * 1024
-FILTERS=('部分显示或隐藏','仅部分显示','仅全部隐藏','仅位置突变','完整显示（检查漏检）','全部帧')
+REACQUIRED='多人候选后首次显示'
+FILTERS=('部分显示或隐藏','仅部分显示','仅全部隐藏','仅位置突变','完整显示（检查漏检）','全部帧',REACQUIRED)
 VERDICTS=('未记录','跟对人，已显示点大致对齐','跟错人或落在器械上','跟对人，但已显示点明显错位','无法判断')
 
 def review_indices(frames,decisions,selection):
     if selection not in FILTERS: raise ValueError('Unknown review filter')
+    if selection == REACQUIRED:
+        indices=[]
+        saw_multiple=False
+        for frame,decision in zip(frames,decisions,strict=True):
+            if decision['show']:
+                if saw_multiple:
+                    indices.append(frame['source_frame_index'])
+                saw_multiple=False
+            elif 'multiple_poses' in decision['reasons']:
+                saw_multiple=True
+        return indices
     def matches(d):
         partial=d['show'] and bool(d['hidden_parts'])
         return {

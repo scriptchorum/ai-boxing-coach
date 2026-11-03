@@ -69,9 +69,17 @@ class ReviewTests(unittest.TestCase):
         decisions=[{'show':True,'hidden_parts':[],'reasons':[]},
                    {'show':True,'hidden_parts':['左腿'],'reasons':['missing_points']},
                    {'show':False,'hidden_parts':['左腿'],'reasons':['position_jump']}]
-        expected=[[51,52],[51],[52],[52],[50],[50,51,52]]
+        expected=[[51,52],[51],[52],[52],[50],[50,51,52],[]]
         for choice,indices in zip(FILTERS,expected):
             self.assertEqual(review_indices(frames,decisions,choice),indices)
+
+    def test_first_display_after_multiple_candidates(self):
+        from boxing_coach.review import REACQUIRED
+        states=['shown','no_pose','shown','multiple_poses','multiple_poses','torso_missing',
+                'partial','shown','multiple_poses','shown','multiple_poses']
+        frames=[{'source_frame_index':100+i} for i in range(len(states))]
+        decisions=[{'show':s in ('shown','partial'),'reasons':[s]} for s in states]
+        self.assertEqual(review_indices(frames,decisions,REACQUIRED),[106,109])
 
     def test_neighbors_empty_edges_and_current_between_matches(self):
         self.assertEqual(neighbors([],7),(None,None))

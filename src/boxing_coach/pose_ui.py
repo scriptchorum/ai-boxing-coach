@@ -7,7 +7,7 @@ from .preview import read_preview_frame
 from .video_io import MediaInputError
 from .synced_player import render_synced_player
 from .quality import assess_frames, reason_text, display_frame, VERSION, LABELS
-from .review import FILTERS, VERDICTS, review_indices, neighbors, export_reviews, import_reviews, read_review_file, MAX_REVIEW_BYTES
+from .review import FILTERS, REACQUIRED, VERDICTS, review_indices, neighbors, export_reviews, import_reviews, read_review_file, MAX_REVIEW_BYTES
 
 
 def clear_pose():
@@ -155,6 +155,8 @@ def render_pose_panel(video,start,end,mirror):
             st.caption('目前没有标记这两类问题的帧。')
     st.write('选择要看的画面类型，再点上一个或下一个。重点看骨架是否跟对人、已显示的关节是否明显错位。完整显示的帧也可能识别错。')
     selection=st.selectbox('待核对画面',FILTERS,key='pose_review_filter')
+    if selection==REACQUIRED:
+        st.caption('这些是本选段内出现多个候选后，骨架第一次重新显示的帧。对照原片检查骨架是否仍跟着训练者。')
     matching=review_indices(cached.frames,decisions,selection)
     remaining=[i for i in matching if i not in reviews]
     only_unrecorded=st.checkbox('只看未记录帧',key='review_unrecorded_only')
