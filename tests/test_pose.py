@@ -201,6 +201,35 @@ class PoseTests(unittest.TestCase):
             self.assertTrue(all(import_reviews(result,c.kwargs['data'])=={} for c in download.call_args_list))
         self.assertFalse(app.exception)
 
+    def test_private_evidence_bundle_requires_prepare_and_tracks_current_frame(self):
+        import streamlit as st
+        from test_evidence import unpack
+        result=fixture_run(self.video)
+        app=AppTest.from_file(str(ROOT/'app/main.py'),default_timeout=30).run()
+        app.text_input(key='input_path').set_value(str(self.path))
+        app.button(key='FormSubmitter:open_video-打开视频').click().run()
+        with patch('boxing_coach.pose_ui.extract_pose',return_value=result):
+            app.button(key='run_pose').click().run()
+        self.assertNotIn('pose_evidence_bundle',app.session_state)
+        with patch('boxing_coach.pose_ui.st.download_button',wraps=st.download_button) as download:
+            app.button(key='evidence_prepare').click().run()
+            evidence=[call for call in download.call_args_list
+                      if call.kwargs['key']=='evidence_download']
+            self.assertEqual(len(evidence),1)
+            self.assertEqual(evidence[0].kwargs['on_click'],'ignore')
+            self.assertEqual(evidence[0].kwargs['file_name'],'boxing-evidence-frame.private.zip')
+            _,_,manifest=unpack(evidence[0].kwargs['data'])
+            self.assertEqual(manifest['source_frame_index'],0)
+            self.assertEqual(manifest['timestamp_ms'],0)
+            self.assertTrue(manifest['private_local_bundle'])
+        self.assertIn('pose_evidence_bundle',app.session_state)
+        with patch('boxing_coach.pose_ui.st.download_button',wraps=st.download_button) as download:
+            app.number_input(key='pose_index').set_value(1).run()
+            self.assertFalse(any(call.kwargs['key']=='evidence_download'
+                                 for call in download.call_args_list))
+        self.assertNotIn('pose_evidence_bundle',app.session_state)
+        self.assertFalse(app.exception)
+
     def test_review_import_replaces_only_after_validation(self):
         from boxing_coach.review import export_reviews
         result=fixture_run(self.video)
