@@ -8,19 +8,26 @@ FILTERS=('部分显示或隐藏','仅部分显示','仅全部隐藏','仅位置�
 VERDICTS=('未记录','跟对人，已显示点大致对齐','跟错人或落在器械上','跟对人，但已显示点明显错位','无法判断')
 DISPLAY_STATES=('完整显示','部分显示','全部隐藏')
 
+def recovery_references(frames, decisions):
+    """Map each first visible source frame after ambiguity to its last visible reference."""
+    references = {}
+    last_visible = None
+    saw_multiple = False
+    for frame, decision in zip(frames, decisions, strict=True):
+        if decision['show']:
+            index = frame['source_frame_index']
+            if saw_multiple:
+                references[index] = last_visible
+            last_visible = index
+            saw_multiple = False
+        elif 'multiple_poses' in decision['reasons']:
+            saw_multiple = True
+    return references
+
 def review_indices(frames,decisions,selection):
     if selection not in FILTERS: raise ValueError('Unknown review filter')
     if selection == REACQUIRED:
-        indices=[]
-        saw_multiple=False
-        for frame,decision in zip(frames,decisions,strict=True):
-            if decision['show']:
-                if saw_multiple:
-                    indices.append(frame['source_frame_index'])
-                saw_multiple=False
-            elif 'multiple_poses' in decision['reasons']:
-                saw_multiple=True
-        return indices
+        return list(recovery_references(frames, decisions))
     def matches(d):
         partial=d['show'] and bool(d['hidden_parts'])
         return {

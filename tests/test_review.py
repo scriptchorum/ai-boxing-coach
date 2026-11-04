@@ -74,12 +74,14 @@ class ReviewTests(unittest.TestCase):
             self.assertEqual(review_indices(frames,decisions,choice),indices)
 
     def test_first_display_after_multiple_candidates(self):
-        from boxing_coach.review import REACQUIRED
+        from boxing_coach.review import REACQUIRED, recovery_references
         states=['shown','no_pose','shown','multiple_poses','multiple_poses','torso_missing',
                 'partial','shown','multiple_poses','shown','multiple_poses']
         frames=[{'source_frame_index':100+i} for i in range(len(states))]
         decisions=[{'show':s in ('shown','partial'),'reasons':[s]} for s in states]
         self.assertEqual(review_indices(frames,decisions,REACQUIRED),[106,109])
+        self.assertEqual(recovery_references(frames, decisions), {106:102,109:107})
+        self.assertEqual(recovery_references(frames[3:], decisions[3:]), {106:None,109:107})
 
     def test_neighbors_empty_edges_and_current_between_matches(self):
         self.assertEqual(neighbors([],7),(None,None))

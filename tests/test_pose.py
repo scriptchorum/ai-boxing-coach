@@ -146,6 +146,29 @@ class PoseTests(unittest.TestCase):
         self.assertFalse('pose_reviews' in app.session_state)
         self.assertEqual(len(app.exception),0)
 
+    def test_recovery_pair_follows_navigation_and_keeps_current_verdict(self):
+        from boxing_coach.review import REACQUIRED
+        result = fixture_run(self.video)
+        result.diagnostics[1].update(status='multiple_poses', detected_count_capped=2)
+        app = AppTest.from_file(str(ROOT/'app/main.py'), default_timeout=30).run()
+        app.text_input(key='input_path').set_value(str(self.path))
+        app.button(key='FormSubmitter:open_video-打开视频').click().run()
+        with patch('boxing_coach.pose_ui.extract_pose', return_value=result):
+            app.button(key='run_pose').click().run()
+        app.selectbox(key='pose_review_filter').set_value(REACQUIRED).run()
+        app.button(key='review_first').click().run()
+        self.assertEqual(app.number_input(key='pose_index').value, 2)
+        captions = [caption for group in app.get('image') for caption in group.captions]
+        self.assertIn('上次显示 · 源帧 0', captions)
+        self.assertIn('首次恢复 · 源帧 2', captions)
+        interval = (result.frames[2]['timestamp_ms'] - result.frames[0]['timestamp_ms']) / 1000
+        self.assertTrue(any(f'相隔 {interval:.3f} 秒' in item.value for item in app.caption))
+        app.button(key='review_mark_1').click().run()
+        app.number_input(key='pose_index').set_value(1).run()
+        self.assertFalse(any(item.value=='骨架恢复前后对照' for item in app.subheader))
+        self.assertEqual(app.session_state.pose_reviews, {2:'跟错人或落在器械上'})
+        self.assertFalse(app.exception)
+
     def test_unrecorded_navigation_completion_and_reopening(self):
         result=fixture_run(self.video)
         app=AppTest.from_file(str(ROOT/'app/main.py'),default_timeout=30).run()

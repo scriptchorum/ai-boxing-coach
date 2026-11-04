@@ -7,7 +7,7 @@ from .preview import read_preview_frame
 from .video_io import MediaInputError
 from .synced_player import render_synced_player
 from .quality import assess_frames, reason_text, display_frame, VERSION, LABELS
-from .review import FILTERS, REACQUIRED, VERDICTS, review_indices, neighbors, summarize_reviews, export_reviews, import_reviews, read_review_file, MAX_REVIEW_BYTES
+from .review import FILTERS, REACQUIRED, VERDICTS, recovery_references, review_indices, neighbors, summarize_reviews, export_reviews, import_reviews, read_review_file, MAX_REVIEW_BYTES
 from .evidence import EvidenceError, MAX_DEMO_FRAMES, build_demo_report, build_evidence_bundle
 
 
@@ -216,7 +216,8 @@ def render_pose_panel(video,start,end,mirror):
     selection=st.selectbox('待核对画面',FILTERS,key='pose_review_filter')
     if selection==REACQUIRED:
         st.caption('这些是本选段内出现多个候选后，骨架第一次重新显示的帧。对照原片检查骨架是否仍跟着训练者。')
-    matching=review_indices(cached.frames,decisions,selection)
+    references = recovery_references(cached.frames, decisions)
+    matching = list(references) if selection == REACQUIRED else review_indices(cached.frames, decisions, selection)
     remaining=[i for i in matching if i not in reviews]
     only_unrecorded=st.checkbox('只看未记录帧',key='review_unrecorded_only')
     indices=remaining if only_unrecorded else matching
@@ -246,13 +247,30 @@ def render_pose_panel(video,start,end,mirror):
         st.warning('此帧检出多个候选，没有自动选择训练者，骨架已隐藏。')
     elif diagnostic['status']=='no_pose':
         st.warning('此帧未检出人体关键点，未补点或插值。')
+    overlay=draw_pose(decoded.image_rgb,display_frame(pose_frame,decision))
+    if index in references:
+        st.subheader('骨架恢复前后对照')
+        reference = references[index]
+        if reference is None:
+            st.info('本选段在这次恢复前没有显示过骨架，可用下方原画核对当前帧。')
+        else:
+            try:
+                earlier = read_preview_frame(video, reference, correct_mirror=mirror)
+            except (MediaInputError, OSError):
+                st.warning('上次显示的画面读取失败，可继续核对下方当前帧。')
+            else:
+                offset = reference - start
+                earlier_pose = display_frame(cached.frames[offset], decisions[offset])
+                st.caption(f'两帧相隔 {(decoded.timestamp_ms-earlier.timestamp_ms)/1000:.3f} 秒。请看两幅图的骨架是否落在同一位训练者身上。')
+                before, after = st.columns(2)
+                before.image(draw_pose(earlier.image_rgb, earlier_pose), caption=f'上次显示 · 源帧 {reference}', width='stretch')
+                after.image(overlay, caption=f'首次恢复 · 源帧 {index}', width='stretch')
     left,right = st.columns(2)
     left.image(decoded.image_rgb,caption=f'源帧 {index} · {decoded.timestamp_ms/1000:.3f} 秒',width='stretch')
     if not decision['show']:
         st.warning('此帧骨架已隐藏：'+reason_text(decision))
     elif decision['hidden_parts']:
         st.warning('此帧部分显示；未显示：'+'、'.join(decision['hidden_parts'])+'。'+reason_text(decision))
-    overlay=draw_pose(decoded.image_rgb,display_frame(pose_frame,decision))
     right.image(overlay,caption='左侧青蓝圆点 · 右侧橙色方点；通过过滤的部位才绘制，线条不代表动作评价',width='stretch')
     evidence_key=(cached.key,index,VERSION)
     prepared=st.session_state.get('pose_evidence_bundle')
