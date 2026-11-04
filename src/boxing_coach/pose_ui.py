@@ -7,7 +7,8 @@ from .preview import read_preview_frame
 from .video_io import MediaInputError
 from .synced_player import render_synced_player
 from .quality import assess_frames, reason_text, display_frame, VERSION, LABELS
-from .review import FILTERS, REACQUIRED, VERDICTS, review_indices, neighbors, export_reviews, import_reviews, read_review_file, MAX_REVIEW_BYTES
+from .review import FILTERS, REACQUIRED, VERDICTS, review_indices, neighbors, summarize_reviews, export_reviews, import_reviews, read_review_file, MAX_REVIEW_BYTES
+from .evidence import EvidenceError, MAX_DEMO_FRAMES, build_demo_report, build_evidence_bundle
 
 
 def clear_pose():
@@ -16,6 +17,9 @@ def clear_pose():
     st.session_state.pop('pose_reviews',None)
     st.session_state.pop('pose_review_filter',None)
     st.session_state.pop('review_unrecorded_only',None)
+    st.session_state.pop('pose_evidence_bundle',None)
+    st.session_state.pop('pose_demo_frames',None)
+    st.session_state.pop('pose_demo_report',None)
 
 
 def go_review(index):
@@ -44,6 +48,49 @@ def render_review_download(cached, *, key):
     st.download_button('下载本次核对记录',data=export_reviews(cached,reviews),
                        file_name='boxing-display-review.private.json',mime='application/json',
                        key=key,disabled=not reviews,on_click='ignore')
+
+
+def render_demo_report(cached, prepared, index):
+    with st.expander(f'本地 Demo 报告（手动选择，最多 {MAX_DEMO_FRAMES} 帧）'):
+        frames=st.session_state.get('pose_demo_frames',{})
+        if not isinstance(frames,dict):
+            frames={}
+            st.session_state.pop('pose_demo_frames',None)
+        if prepared is not None:
+            if st.button('将当前证据帧加入 Demo 报告',key='demo_evidence_add',
+                         disabled=index in frames or len(frames) >= MAX_DEMO_FRAMES):
+                frames[index]=prepared['data']
+                st.session_state.pose_demo_frames=frames
+                st.session_state.pop('pose_demo_report',None)
+        if index in frames and st.button('从 Demo 报告移除当前帧',key='demo_evidence_remove'):
+            frames.pop(index)
+            if not frames: st.session_state.pop('pose_demo_frames',None)
+            st.session_state.pop('pose_demo_report',None)
+        if st.button('清空 Demo 报告帧',key='demo_report_clear',disabled=not frames):
+            frames.clear()
+            st.session_state.pop('pose_demo_frames',None)
+            st.session_state.pop('pose_demo_report',None)
+        selected=sorted(frames)
+        st.caption('已手动选择 '+('、'.join(map(str,selected)) if selected else '0')+
+                   f' 个源帧（{len(selected)}/{MAX_DEMO_FRAMES}）。不会自动挑帧或判断动作。')
+        report_key=(cached.key,tuple(selected))
+        report=st.session_state.get('pose_demo_report')
+        if report is not None and report['key'] != report_key:
+            st.session_state.pop('pose_demo_report',None)
+            report=None
+        if st.button('准备本地 Demo 报告',key='demo_report_prepare',disabled=not frames):
+            try:
+                data=build_demo_report([frames[source_index] for source_index in sorted(frames)])
+            except EvidenceError:
+                st.error('所选证据帧不一致或已损坏，未生成报告；请清空后重新准备。')
+            else:
+                report={'key':report_key,'data':data}
+                st.session_state.pose_demo_report=report
+        if report is not None:
+            st.download_button('下载本地 Demo 报告（私人 ZIP）',data=report['data'],
+                               file_name='boxing-demo-report.private.zip',mime='application/zip',
+                               key='demo_report_download',on_click='ignore')
+        st.caption('报告含所选显示帧与模型骨架。请仅保存在受控目录，不要加入 Git 或公开分享；它不是动作评分、准确率或教练结论。')
 
 
 def render_review_restore_hint():
@@ -153,6 +200,18 @@ def render_pose_panel(video,start,end,mirror):
             st.button('查看所选问题帧',key='review_issue_jump',on_click=go_review,args=(selected,))
         else:
             st.caption('目前没有标记这两类问题的帧。')
+    review_summary=summarize_reviews(cached,reviews)
+    with st.expander('查看人工核对汇总'):
+        st.caption(f"已记录 {review_summary['reviewed_frames']}/{review_summary['total_frames']} 帧；其中显示问题 {review_summary['problem_frames']} 帧。下列数量只是人工操作记录，不是准确率或专业标注。")
+        st.dataframe([{'\u4eba工判断':verdict,'\u5e27数':count}
+                      for verdict,count in review_summary['verdict_counts'].items()],hide_index=True)
+        st.dataframe([{'\u8bb0录时的显示状态':state,'\u5e27数':count}
+                      for state,count in review_summary['display_counts'].items()],hide_index=True)
+        if review_summary['issue_reason_counts']:
+            st.write('显示问题帧与当前工程规则的对照：')
+            st.dataframe([{'\u5f53前规则原因':LABELS.get(code,'未触发当前隐藏原因'),'\u5e27数':count}
+                          for code,count in review_summary['issue_reason_counts'].items()],hide_index=True)
+            st.caption('同一帧可同时触发多个原因，各项不能直接相加；“未触发”表示人工看到问题时，当前规则没有将该帧拒绝。')
     st.write('选择要看的画面类型，再点上一个或下一个。重点看骨架是否跟对人、已显示的关节是否明显错位。完整显示的帧也可能识别错。')
     selection=st.selectbox('待核对画面',FILTERS,key='pose_review_filter')
     if selection==REACQUIRED:
@@ -193,7 +252,30 @@ def render_pose_panel(video,start,end,mirror):
         st.warning('此帧骨架已隐藏：'+reason_text(decision))
     elif decision['hidden_parts']:
         st.warning('此帧部分显示；未显示：'+'、'.join(decision['hidden_parts'])+'。'+reason_text(decision))
-    right.image(draw_pose(decoded.image_rgb,display_frame(pose_frame,decision)),caption='左侧青蓝圆点 · 右侧橙色方点；通过过滤的部位才绘制，线条不代表动作评价',width='stretch')
+    overlay=draw_pose(decoded.image_rgb,display_frame(pose_frame,decision))
+    right.image(overlay,caption='左侧青蓝圆点 · 右侧橙色方点；通过过滤的部位才绘制，线条不代表动作评价',width='stretch')
+    evidence_key=(cached.key,index,VERSION)
+    prepared=st.session_state.get('pose_evidence_bundle')
+    if prepared is not None and prepared['key'] != evidence_key:
+        st.session_state.pop('pose_evidence_bundle',None)
+        prepared=None
+    st.caption('如需留存这一帧，可在本机准备私人证据包；其中包含上面两张图片、源帧号、PTS、模型和显示规则摘要，不会自动上传。')
+    if st.button('准备当前证据帧包',key='evidence_prepare'):
+        try:
+            data=build_evidence_bundle(cached,pose_frame,diagnostic,decision,
+                                       decoded.image_rgb,overlay,
+                                       source_timestamp_ms=decoded.timestamp_ms)
+        except EvidenceError:
+            st.error('当前帧与识别结果不一致，未生成证据包；请重新打开视频并识别。')
+        else:
+            prepared={'key':evidence_key,'data':data}
+            st.session_state.pose_evidence_bundle=prepared
+    if prepared is not None:
+        st.download_button('下载当前证据帧包（私人 ZIP）',data=prepared['data'],
+                           file_name='boxing-evidence-frame.private.zip',mime='application/zip',
+                           key='evidence_download',on_click='ignore')
+        st.caption('该 ZIP 含视频画面和模型骨架，属于私人训练资料；请保存在受控目录，不要加入 Git 或公开分享。')
+    render_demo_report(cached,prepared,index)
     reviews=st.session_state.setdefault('pose_reviews',{})
     st.write('此帧人工记录：'+reviews.get(index,'未记录'))
     st.caption('只记录显示情况，不判断拳术动作对错；全部隐藏时请选择“无法判断”。会话记录刷新、重识别或换片会清除；可在上方“保存或恢复人工核对记录”手动下载备份，不自动上传。')

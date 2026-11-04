@@ -1,8 +1,13 @@
 import json
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import unittest
 
 from boxing_coach.pose import CONFIG, PoseRun, missing_landmarks
 from boxing_coach.quality_gate import QualityGateError, clip_quality_report, metric_quality_gate
+from tools.validate_quality_reports import ROOT, validate_report
 
 
 MODEL={'id':'pose_landmarker_lite','version':'1','asset_sha256':'a'*64}
@@ -152,6 +157,55 @@ class QualityGateTests(unittest.TestCase):
         malformed.frames[0]['landmarks'][1]['index']=0
         with self.assertRaisesRegex(QualityGateError,'0–32'):
             clip_quality_report(malformed)
+
+    def test_machine_readable_contract_accepts_generated_reports(self):
+        run=pose_run([frame(0,0)])
+        reports=(
+            clip_quality_report(run),
+            metric_quality_gate(run,'return_time_ms',[11,15],{'extension':0}),
+            metric_quality_gate(run,'return_time_ms',[11,15],{'extension':0},
+                                single_person_confirmed=True),
+        )
+        for report in reports:
+            with self.subTest(report=report.get('clip_status',report.get('status'))):
+                self.assertEqual(validate_report(report),[])
+
+    def test_contract_rejects_privacy_fields_and_inconsistent_policies(self):
+        run=pose_run([frame(0,0)])
+        clip=clip_quality_report(run)
+        metric=metric_quality_gate(run,'return_time_ms',[11,15],{'extension':0})
+        invalid=(
+            {**clip,'run_key':r'C:\\private\\person.mp4'},
+            {**clip,'model_status_frames':{**clip['model_status_frames'],'no_pose':1}},
+            {**clip,'clip_status':'rejected'},
+            {**metric,'value':123.0},
+            {**metric,'status':'eligible','value_policy':'compute_later'},
+            {**metric,'reason_codes':['interpolation_not_supported']},
+        )
+        for report in invalid:
+            with self.subTest(keys=sorted(report)):
+                self.assertTrue(validate_report(report))
+
+    def test_quality_report_validator_cli_does_not_echo_values(self):
+        report=clip_quality_report(pose_run([frame(0,0)]))
+        with tempfile.TemporaryDirectory() as directory:
+            good=Path(directory)/'good.json'
+            bad=Path(directory)/'bad.json'
+            good.write_text(json.dumps(report),encoding='utf-8')
+            bad.write_text(json.dumps({**report,'private_path':'do-not-echo'}),encoding='utf-8')
+            accepted=subprocess.run(
+                [sys.executable,str(ROOT/'tools/validate_quality_reports.py'),str(good)],
+                capture_output=True,text=True,
+            )
+            rejected=subprocess.run(
+                [sys.executable,str(ROOT/'tools/validate_quality_reports.py'),str(bad)],
+                capture_output=True,text=True,
+            )
+        self.assertEqual(accepted.returncode,0,accepted.stdout+accepted.stderr)
+        self.assertIn('PASS: 1 analysis quality reports',accepted.stdout)
+        self.assertNotEqual(rejected.returncode,0)
+        self.assertIn('FAIL: schema:',rejected.stdout)
+        self.assertNotIn('do-not-echo',rejected.stdout)
 
 
 if __name__ == '__main__':

@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/scriptchorum/ai-boxing-coach/evidence-frame/1",
+  "title": "Private local evidence frame manifest v1",
+  "type": "object",
+  "properties": {
+    "format": { "const": "boxing-evidence-frame-1" },
+    "private_local_bundle": { "const": true },
+    "run_key": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "source_frame_index": { "type": "integer", "minimum": 0, "maximum": 19999 },
+    "timestamp_ms": { "type": "number", "minimum": 0 },
+    "selection": {
+      "type": "object",
+      "properties": {
+        "start_frame": { "type": "integer", "minimum": 0, "maximum": 19999 },
+        "end_frame": { "type": "integer", "minimum": 0, "maximum": 19999 },
+        "mirror_corrected": { "type": "boolean" }
+      },
+      "required": ["start_frame", "end_frame", "mirror_corrected"],
+      "additionalProperties": false
+    },
+    "model": {
+      "type": "object",
+      "properties": {
+        "id": { "$ref": "#/$defs/versionString" },
+        "version": { "$ref": "#/$defs/versionString" },
+        "asset_sha256": { "$ref": "#/$defs/sha256" }
+      },
+      "required": ["id", "version", "asset_sha256"],
+      "additionalProperties": false
+    },
+    "runtime": {
+      "type": "object",
+      "properties": {
+        "mediapipe": { "$ref": "#/$defs/versionString" },
+        "numpy": { "$ref": "#/$defs/versionString" },
+        "av": { "$ref": "#/$defs/versionString" }
+      },
+      "required": ["mediapipe", "numpy", "av"],
+      "additionalProperties": false
+    },
+    "config": {
+      "type": "object",
+      "properties": {
+        "version": { "$ref": "#/$defs/versionString" },
+        "min_visibility": { "$ref": "#/$defs/unitNumber" },
+        "min_presence": { "$ref": "#/$defs/unitNumber" }
+      },
+      "required": ["version", "min_visibility", "min_presence"],
+      "additionalProperties": false
+    },
+    "model_status": {
+      "enum": ["no_pose", "multiple_poses", "single_model_pose"]
+    },
+    "display": {
+      "type": "object",
+      "properties": {
+        "rule_version": { "const": "display-quality-0.2" },
+        "state": { "enum": ["full_display", "partial_display", "hidden"] },
+        "reason_codes": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "no_pose",
+              "multiple_poses",
+              "out_of_frame",
+              "missing_points",
+              "position_jump",
+              "time_gap",
+              "torso_missing"
+            ]
+          },
+          "uniqueItems": true,
+          "maxItems": 7
+        },
+        "hidden_parts": {
+          "type": "array",
+          "items": { "enum": ["左臂", "右臂", "左腿", "右腿"] },
+          "uniqueItems": true,
+          "maxItems": 4
+        },
+        "allowed_joint_count": { "type": "integer", "minimum": 0, "maximum": 12 }
+      },
+      "required": ["rule_version", "state", "reason_codes", "hidden_parts", "allowed_joint_count"],
+      "additionalProperties": false
+    },
+    "image_size": {
+      "type": "object",
+      "properties": {
+        "width": { "type": "integer", "minimum": 1, "maximum": 8192 },
+        "height": { "type": "integer", "minimum": 1, "maximum": 8192 }
+      },
+      "required": ["width", "height"],
+      "additionalProperties": false
+    },
+    "files": {
+      "type": "object",
+      "properties": {
+        "source": { "$ref": "#/$defs/sourceFile" },
+        "overlay": { "$ref": "#/$defs/overlayFile" }
+      },
+      "required": ["source", "overlay"],
+      "additionalProperties": false
+    },
+    "limitations": {
+      "type": "array",
+      "prefixItems": [
+        { "const": "private_local_export_contains_video_pixels" },
+        { "const": "model_estimate_not_ground_truth" },
+        { "const": "display_rule_not_action_assessment" },
+        { "const": "no_accuracy_or_coaching_claim" }
+      ],
+      "minItems": 4,
+      "maxItems": 4
+    }
+  },
+  "required": [
+    "format",
+    "private_local_bundle",
+    "run_key",
+    "source_frame_index",
+    "timestamp_ms",
+    "selection",
+    "model",
+    "runtime",
+    "config",
+    "model_status",
+    "display",
+    "image_size",
+    "files",
+    "limitations"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "versionString": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "pattern": "^[A-Za-z0-9_.+-]+$"
+    },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "unitNumber": { "type": "number", "minimum": 0, "maximum": 1 },
+    "sourceFile": {
+      "type": "object",
+      "properties": {
+        "name": { "const": "source.png" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      },
+      "required": ["name", "sha256"],
+      "additionalProperties": false
+    },
+    "overlayFile": {
+      "type": "object",
+      "properties": {
+        "name": { "const": "overlay.png" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      },
+      "required": ["name", "sha256"],
+      "additionalProperties": false
+    }
+  }
+}

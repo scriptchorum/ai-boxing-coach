@@ -6,6 +6,7 @@ MAX_REVIEW_BYTES = 1024 * 1024
 REACQUIRED='多人候选后首次显示'
 FILTERS=('部分显示或隐藏','仅部分显示','仅全部隐藏','仅位置突变','完整显示（检查漏检）','全部帧',REACQUIRED)
 VERDICTS=('未记录','跟对人，已显示点大致对齐','跟错人或落在器械上','跟对人，但已显示点明显错位','无法判断')
+DISPLAY_STATES=('完整显示','部分显示','全部隐藏')
 
 def review_indices(frames,decisions,selection):
     if selection not in FILTERS: raise ValueError('Unknown review filter')
@@ -35,6 +36,39 @@ def review_indices(frames,decisions,selection):
 def neighbors(indices,current):
     return (next((i for i in reversed(indices) if i<current),None),
             next((i for i in indices if i>current),None))
+
+
+def summarize_reviews(run,reviews):
+    """Return aggregate inspection counts without media or frame identifiers."""
+    if not isinstance(reviews,dict):
+        raise ValueError('人工核对记录不合法。')
+    decisions={f['source_frame_index']:d for f,d in zip(run.frames,assess_frames(run),strict=True)}
+    verdict_counts={verdict:0 for verdict in VERDICTS[1:]}
+    display_counts={state:0 for state in DISPLAY_STATES}
+    issue_reason_counts={}
+    problem_verdicts=set(VERDICTS[2:4])
+    for index,verdict in reviews.items():
+        if type(index) is not int or index not in decisions or verdict not in VERDICTS[1:]:
+            raise ValueError('人工核对记录不合法。')
+        decision=decisions[index]
+        if not decision['show'] and verdict!='无法判断':
+            raise ValueError('全部隐藏的帧不能包含已显示骨架的判断。')
+        state=DISPLAY_STATES[2] if not decision['show'] else (
+            DISPLAY_STATES[1] if decision['hidden_parts'] else DISPLAY_STATES[0])
+        verdict_counts[verdict]+=1
+        display_counts[state]+=1
+        if verdict in problem_verdicts:
+            reasons=decision['reasons'] or ['no_display_rule_reason']
+            for reason in reasons:
+                issue_reason_counts[reason]=issue_reason_counts.get(reason,0)+1
+    return {
+        'reviewed_frames':len(reviews),
+        'total_frames':len(run.frames),
+        'problem_frames':sum(verdict_counts[v] for v in problem_verdicts),
+        'verdict_counts':verdict_counts,
+        'display_counts':display_counts,
+        'issue_reason_counts':dict(sorted(issue_reason_counts.items())),
+    }
 
 def export_reviews(run,reviews):
     payload={'format':'boxing-display-review-2','run_key':run.key,

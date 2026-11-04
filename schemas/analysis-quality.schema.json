@@ -1,0 +1,274 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/scriptchorum/ai-boxing-coach/analysis-quality/0.1",
+  "title": "Analysis quality engineering reports v0.1",
+  "oneOf": [
+    { "$ref": "#/$defs/ClipReport" },
+    { "$ref": "#/$defs/MetricGate" }
+  ],
+  "$defs": {
+    "VersionString": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "pattern": "^[A-Za-z0-9_.+-]+$"
+    },
+    "Count": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1800
+    },
+    "UnitThreshold": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "Model": {
+      "type": "object",
+      "properties": {
+        "id": { "$ref": "#/$defs/VersionString" },
+        "version": { "$ref": "#/$defs/VersionString" },
+        "asset_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      },
+      "required": ["id", "version", "asset_sha256"],
+      "additionalProperties": false
+    },
+    "Runtime": {
+      "type": "object",
+      "properties": {
+        "mediapipe": { "$ref": "#/$defs/VersionString" },
+        "numpy": { "$ref": "#/$defs/VersionString" },
+        "av": { "$ref": "#/$defs/VersionString" }
+      },
+      "required": ["mediapipe", "numpy", "av"],
+      "additionalProperties": false
+    },
+    "Config": {
+      "type": "object",
+      "properties": {
+        "version": { "$ref": "#/$defs/VersionString" },
+        "min_visibility": { "$ref": "#/$defs/UnitThreshold" },
+        "min_presence": { "$ref": "#/$defs/UnitThreshold" },
+        "interpolation_max_gap_ms": { "type": "number", "minimum": 0 }
+      },
+      "required": ["version", "min_visibility", "min_presence", "interpolation_max_gap_ms"],
+      "additionalProperties": false
+    },
+    "Thresholds": {
+      "type": "object",
+      "properties": {
+        "min_visibility": { "$ref": "#/$defs/UnitThreshold" },
+        "min_presence": { "$ref": "#/$defs/UnitThreshold" },
+        "max_torso_speed_normalized_per_second": { "type": "number", "exclusiveMinimum": 0 },
+        "max_timeline_gap_ms": { "type": "number", "exclusiveMinimum": 0 }
+      },
+      "required": [
+        "min_visibility",
+        "min_presence",
+        "max_torso_speed_normalized_per_second",
+        "max_timeline_gap_ms"
+      ],
+      "additionalProperties": false
+    },
+    "Interpolation": {
+      "type": "object",
+      "properties": {
+        "policy": { "enum": ["disabled", "configured_but_not_implemented"] },
+        "max_gap_ms": { "type": "number", "minimum": 0 },
+        "applied_frame_count": { "$ref": "#/$defs/Count" },
+        "applied_landmark_count": { "type": "integer", "minimum": 0, "maximum": 59400 }
+      },
+      "required": ["policy", "max_gap_ms", "applied_frame_count", "applied_landmark_count"],
+      "additionalProperties": false
+    },
+    "Limitations": {
+      "type": "array",
+      "prefixItems": [
+        { "const": "engineering_gate_not_accuracy" },
+        { "const": "single_model_pose_not_single_person_proof" },
+        { "const": "thresholds_require_real_sample_calibration" },
+        { "const": "no_action_or_coaching_assessment" }
+      ],
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "DeclaredReason": {
+      "enum": [
+        "declared_multiple_people",
+        "declared_out_of_frame",
+        "declared_blur",
+        "declared_occlusion",
+        "declared_unsupported_view"
+      ]
+    },
+    "MetricReason": {
+      "enum": [
+        "missing_event",
+        "no_model_pose",
+        "multiple_model_pose_candidates",
+        "critical_landmark_missing",
+        "critical_landmark_low_signal",
+        "critical_landmark_out_of_frame",
+        "timestamp_gap",
+        "torso_position_jump",
+        "interpolation_not_supported",
+        "declared_multiple_people",
+        "declared_out_of_frame",
+        "declared_blur",
+        "declared_occlusion",
+        "declared_unsupported_view"
+      ]
+    },
+    "ModelStatusCounts": {
+      "type": "object",
+      "properties": {
+        "no_pose": { "$ref": "#/$defs/Count" },
+        "multiple_poses": { "$ref": "#/$defs/Count" },
+        "single_model_pose": { "$ref": "#/$defs/Count" }
+      },
+      "required": ["no_pose", "multiple_poses", "single_model_pose"],
+      "additionalProperties": false
+    },
+    "DisplayStateCounts": {
+      "type": "object",
+      "properties": {
+        "full_display": { "$ref": "#/$defs/Count" },
+        "partial_display": { "$ref": "#/$defs/Count" },
+        "hidden": { "$ref": "#/$defs/Count" }
+      },
+      "required": ["full_display", "partial_display", "hidden"],
+      "additionalProperties": false
+    },
+    "FrameReasonCounts": {
+      "type": "object",
+      "properties": {
+        "no_model_pose": { "$ref": "#/$defs/Count" },
+        "multiple_model_pose_candidates": { "$ref": "#/$defs/Count" },
+        "critical_landmark_out_of_frame": { "$ref": "#/$defs/Count" },
+        "critical_landmark_unusable": { "$ref": "#/$defs/Count" },
+        "torso_position_jump": { "$ref": "#/$defs/Count" },
+        "timestamp_gap": { "$ref": "#/$defs/Count" },
+        "torso_landmark_unusable": { "$ref": "#/$defs/Count" },
+        "interpolation_not_supported": { "$ref": "#/$defs/Count" }
+      },
+      "required": [
+        "no_model_pose",
+        "multiple_model_pose_candidates",
+        "critical_landmark_out_of_frame",
+        "critical_landmark_unusable",
+        "torso_position_jump",
+        "timestamp_gap",
+        "torso_landmark_unusable",
+        "interpolation_not_supported"
+      ],
+      "additionalProperties": false
+    },
+    "ClipReport": {
+      "type": "object",
+      "properties": {
+        "format": { "const": "boxing-analysis-quality-1" },
+        "rule_version": { "const": "analysis-quality-0.1" },
+        "display_rule_version": { "const": "display-quality-0.2" },
+        "model": { "$ref": "#/$defs/Model" },
+        "runtime": { "$ref": "#/$defs/Runtime" },
+        "config": { "$ref": "#/$defs/Config" },
+        "thresholds": { "$ref": "#/$defs/Thresholds" },
+        "frame_count": { "type": "integer", "minimum": 1, "maximum": 1800 },
+        "model_status_frames": { "$ref": "#/$defs/ModelStatusCounts" },
+        "display_state_frames": { "$ref": "#/$defs/DisplayStateCounts" },
+        "frame_reason_counts": { "$ref": "#/$defs/FrameReasonCounts" },
+        "declared_clip_reasons": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/DeclaredReason" },
+          "uniqueItems": true,
+          "maxItems": 5
+        },
+        "clip_status": { "enum": ["rejected", "review_required"] },
+        "interpolation": { "$ref": "#/$defs/Interpolation" },
+        "limitations": { "$ref": "#/$defs/Limitations" }
+      },
+      "required": [
+        "format",
+        "rule_version",
+        "display_rule_version",
+        "model",
+        "runtime",
+        "config",
+        "thresholds",
+        "frame_count",
+        "model_status_frames",
+        "display_state_frames",
+        "frame_reason_counts",
+        "declared_clip_reasons",
+        "clip_status",
+        "interpolation",
+        "limitations"
+      ],
+      "additionalProperties": false
+    },
+    "MetricGate": {
+      "type": "object",
+      "properties": {
+        "format": { "const": "boxing-analysis-quality-1" },
+        "rule_version": { "const": "analysis-quality-0.1" },
+        "metric_id": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9_]+$"
+        },
+        "required_landmark_indices": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0, "maximum": 32 },
+          "minItems": 1,
+          "maxItems": 33,
+          "uniqueItems": true
+        },
+        "event_names": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 2,
+            "maxLength": 32,
+            "pattern": "^[a-z][a-z0-9_]+$"
+          },
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true
+        },
+        "status": { "enum": ["rejected", "review_required", "eligible"] },
+        "reason_codes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/MetricReason" },
+          "uniqueItems": true,
+          "maxItems": 14
+        },
+        "review_reasons": {
+          "type": "array",
+          "items": { "const": "single_person_not_confirmed" },
+          "uniqueItems": true,
+          "maxItems": 1
+        },
+        "value_policy": { "enum": ["must_be_null", "compute_later"] },
+        "thresholds": { "$ref": "#/$defs/Thresholds" },
+        "interpolation": { "$ref": "#/$defs/Interpolation" },
+        "limitations": { "$ref": "#/$defs/Limitations" }
+      },
+      "required": [
+        "format",
+        "rule_version",
+        "metric_id",
+        "required_landmark_indices",
+        "event_names",
+        "status",
+        "reason_codes",
+        "review_reasons",
+        "value_policy",
+        "thresholds",
+        "interpolation",
+        "limitations"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

@@ -12,6 +12,7 @@ dependencies = [
   "av==19.0.1",
   "jsonschema==4.26.0",
   "mediapipe==1.1.1",
+  "pillow==12.3.0",
   "streamlit==1.66.0",
 ]
 
