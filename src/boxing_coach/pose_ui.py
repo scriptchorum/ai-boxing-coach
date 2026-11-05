@@ -36,7 +36,7 @@ def render_side_legend():
     st.markdown(f'<span style="color:{LEFT_COLOR}">● 左侧肢体（圆点）</span>　'
                 f'<span style="color:{RIGHT_COLOR}">■ 右侧肢体（方点）</span>　肩线与髋线为白色',
                 unsafe_allow_html=True)
-    st.caption('左右指训练者身体的模型标签，不是画面左右，也不代表惯用手或前后手。镜像纠正后颜色仍跟随同一标签；重叠不代表识别错误，模型也可能把左右认反，需对照原片。')
+    st.caption('颜色对应模型标记的人体左右侧。镜像纠正后标签颜色保持一致，交叉和侧身时请对照原片核对左右与点位。')
 
 
 def render_review_download(cached, *, key):
@@ -90,7 +90,7 @@ def render_demo_report(cached, prepared, index):
             st.download_button('下载本地 Demo 报告（私人 ZIP）',data=report['data'],
                                file_name='boxing-demo-report.private.zip',mime='application/zip',
                                key='demo_report_download',on_click='ignore')
-        st.caption('报告含所选显示帧与模型骨架。请仅保存在受控目录，不要加入 Git 或公开分享；它不是动作评分、准确率或教练结论。')
+        st.caption('报告汇总所选显示帧和模型骨架，用于本地逐帧核对。请保存在受控目录，分享前确认素材授权。')
 
 
 def render_review_restore_hint():
@@ -133,7 +133,7 @@ def render_pose_panel(video,start,end,mirror):
     st.subheader('播放并查看骨架',anchor='pose-playback')
     st.write('先点击下方“识别所选区间的人体关键点”，完成后播放器会出现在这里。刷新或换片后需要重新识别。')
     st.write('对上方所选区间运行本地模型，再逐帧核对肩、肘、腕、髋、膝与踝。结果只保留在当前会话，不上传或写入训练历史。')
-    st.caption('目前是工程试跑：模型信号不等于识别准确率，也不表示动作正确。女性身体多样性的正式验证仍待完成。每次最多 30 秒、1800 帧。')
+    st.caption('当前功能用于检查关键点流程与显示。每次最多 30 秒、1800 帧；女性身体多样性验证按样本计划开展。')
     uploaded=render_review_restore_hint()
     try:
         key = run_key(video,start,end,mirror)
@@ -202,7 +202,7 @@ def render_pose_panel(video,start,end,mirror):
             st.caption('目前没有标记这两类问题的帧。')
     review_summary=summarize_reviews(cached,reviews)
     with st.expander('查看人工核对汇总'):
-        st.caption(f"已记录 {review_summary['reviewed_frames']}/{review_summary['total_frames']} 帧；其中显示问题 {review_summary['problem_frames']} 帧。下列数量只是人工操作记录，不是准确率或专业标注。")
+        st.caption(f"已记录 {review_summary['reviewed_frames']}/{review_summary['total_frames']} 帧；其中显示问题 {review_summary['problem_frames']} 帧。下列数量汇总本次人工核对进度与显示问题。")
         st.dataframe([{'\u4eba工判断':verdict,'\u5e27数':count}
                       for verdict,count in review_summary['verdict_counts'].items()],hide_index=True)
         st.dataframe([{'\u8bb0录时的显示状态':state,'\u5e27数':count}
@@ -221,7 +221,7 @@ def render_pose_panel(video,start,end,mirror):
     remaining=[i for i in matching if i not in reviews]
     only_unrecorded=st.checkbox('只看未记录帧',key='review_unrecorded_only')
     indices=remaining if only_unrecorded else matching
-    st.caption(f'此类已记录 {len(matching)-len(remaining)}/{len(matching)} 帧，剩余 {len(remaining)} 帧。记录“无法判断”也算已记录，不代表识别正确。')
+    st.caption(f'此类已记录 {len(matching)-len(remaining)}/{len(matching)} 帧，剩余 {len(remaining)} 帧。进度包含“无法判断”，各类判断分别汇总。')
     current=st.session_state.get('pose_index',start)
     previous,following=neighbors(indices,current)
     first,prev,nxt=st.columns(3)
@@ -271,7 +271,7 @@ def render_pose_panel(video,start,end,mirror):
         st.warning('此帧骨架已隐藏：'+reason_text(decision))
     elif decision['hidden_parts']:
         st.warning('此帧部分显示；未显示：'+'、'.join(decision['hidden_parts'])+'。'+reason_text(decision))
-    right.image(overlay,caption='左侧青蓝圆点 · 右侧橙色方点；通过过滤的部位才绘制，线条不代表动作评价',width='stretch')
+    right.image(overlay,caption='左侧青蓝圆点 · 右侧橙色方点；通过过滤的部位才绘制，绘制结果用于对照原片',width='stretch')
     evidence_key=(cached.key,index,VERSION)
     prepared=st.session_state.get('pose_evidence_bundle')
     if prepared is not None and prepared['key'] != evidence_key:
@@ -296,12 +296,12 @@ def render_pose_panel(video,start,end,mirror):
     render_demo_report(cached,prepared,index)
     reviews=st.session_state.setdefault('pose_reviews',{})
     st.write('此帧人工记录：'+reviews.get(index,'未记录'))
-    st.caption('只记录显示情况，不判断拳术动作对错；全部隐藏时请选择“无法判断”。会话记录刷新、重识别或换片会清除；可在上方“保存或恢复人工核对记录”手动下载备份，不自动上传。')
+    st.caption('请选择当前帧的显示情况；全部隐藏时选择“无法判断”。刷新、重识别或换片会清除会话记录；需要保留时在上方手动下载本地备份。')
     columns=st.columns(2)
     for n,verdict in enumerate(VERDICTS[1:]):
         columns[n%2].button(verdict,key=f'review_mark_{n}',on_click=record_review,args=(index,verdict),disabled=not decision['show'] and verdict!='无法判断')
     st.button('清除此帧记录',key='review_clear',on_click=record_review,args=(index,'未记录'))
-    st.caption(f'本次已记录 {len(reviews)}/{len(cached.frames)} 帧；点过下一帧不会自动算已核对。不是准确率或专业标注。')
+    st.caption(f'本次已记录 {len(reviews)}/{len(cached.frames)} 帧；每帧点击判断后计入进度。')
     render_review_download(cached,key='review_download_inline')
     with st.expander('此帧关键点与运行信息'):
         st.dataframe([{'关键点':name,'绘制':idx in decision['allowed_indices'],
@@ -309,4 +309,4 @@ def render_pose_panel(video,start,end,mirror):
                        'presence':pose_frame['landmarks'][idx]['presence']} for idx,name in JOINTS.items()],hide_index=True)
         st.json({'model':cached.model,'runtime':cached.runtime,'config':cached.config,
                  'mirror_corrected':cached.mirror,'selected_source_frames':[cached.start,cached.end]})
-    st.caption('默认绘制阈值为 visibility 与 presence 均不低于 0.5 且在画面内，只是待验证的工程选择。没有连线不等于动作错误，连线完整也不等于动作合格。')
+    st.caption('工程绘制阈值为 visibility 与 presence 均不低于 0.5 且在画面内。请结合原片核对点位与显示结果。')

@@ -8,7 +8,7 @@
 
 清单使用匿名 `participant_id`、`sample_id` 和不含路径的 `local_file_label`。授权原件另存，只在清单写不含姓名或路径的 `reference_id`。性别分组只能来自参与者自愿提供；不得根据外观、声音、衣物或骨架推断。拒绝提供非必要性别信息时使用 `not_provided`。
 
-本工具不是法律授权表，也不会代替用户向参与者说明用途、访问人、保留时间、退出和删除方式。撤回后把授权状态改为 `withdrawn`、相关样本改为 `do_not_use`，并按实际约定删除本地派生数据。
+本工具记录授权状态。用户向参与者说明用途、访问人、保留时间、退出和删除方式，并确认授权表。撤回后把授权状态改为 `withdrawn`、相关样本改为 `do_not_use`，并按实际约定删除本地派生数据。
 
 ## 创建本地私有清单
 
@@ -38,7 +38,7 @@
 - `authorization.status`：`pending`、`granted` 或 `withdrawn`。
 - `authorization.reference_id`：授权原件的本地不透明编号；不写路径或个人信息。
 - `authorization.allowed_uses`：只勾选实际获得同意的用途。当前工程试跑使用 `local_pose_engineering`，媒体兼容检查使用 `local_media_probe`。
-- `retention_review_date`：下一次检查是否继续保留的日期，不等于默认永久保留。
+- `retention_review_date`：下一次检查是否继续保留的日期。
 
 样本字段：
 

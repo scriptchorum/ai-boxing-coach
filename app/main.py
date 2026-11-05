@@ -89,7 +89,7 @@ else:
         st.image(frame.image_rgb, caption=f"源帧 {frame.source_frame_index} · {frame.timestamp_ms / 1000:.6f} 秒" + (" · 已纠正镜像" if mirror else " · 保留原画面"), width="stretch")
 
 st.subheader("选择稳定的训练区间")
-st.write("避开拿取手机、出框和遮挡；这只是手动选择，不代表系统判断动作合格。")
+st.write("请选择单人全身可见、画面稳定的区间，避开拿取手机、出框和遮挡。")
 start_col, end_col = st.columns(2)
 start = start_col.number_input("起始帧（包含）", min_value=0, max_value=last, value=0, step=1, key="start_frame")
 end = end_col.number_input("结束帧（包含）", min_value=0, max_value=last, value=last, step=1, key="end_frame")

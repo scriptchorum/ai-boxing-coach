@@ -19,7 +19,7 @@ Codex 会读取项目中的 AGENTS.md。聊天记录与本地文件的访问是�
 ## 每台电脑首次接入
 
 1. 确认已安装 Git（终端运行 `git --version`）。
-2. 用有权限访问本仓库的 GitHub 账号完成 Git 身份验证。GitHub 插件连接不等于终端 Git 已登录。
+2. 用有权限访问本仓库的 GitHub 账号完成 Git 身份验证。GitHub 连接器与终端 Git 分别完成身份验证。
    Windows 的 Git Credential Manager 可能在首次 clone/push 时打开登录页面；在浏览器完成登录，不把令牌发到聊天或写入文件。
 3. 在希望保存项目的位置打开终端，运行：
 

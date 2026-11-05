@@ -9,4 +9,4 @@
 .\.venv\Scripts\python.exe -m boxing_coach.model_assets verify
 ```
 
-当前只登记 MediaPipe Pose Landmarker Lite，作为工程加载与后续基准候选；它尚未在拳击视频或女性样本上验证，不代表项目已经具备动作分析能力。
+当前登记 MediaPipe Pose Landmarker Lite，用于工程加载与后续基准测试。拳击视频和女性样本表现按验证计划评估。
