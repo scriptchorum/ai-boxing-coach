@@ -13,6 +13,7 @@ import numpy as np
 from .model_assets import AssetError, find_project_root, load_manifest, select_asset, verify_asset, sha256_file
 from .preview import PreviewVideo, selection_times
 from .video_io import decode_video
+from .subject_tracker import SubjectTracker
 
 
 CONFIG = {
@@ -73,11 +74,7 @@ def confidence(value):
     return value if value is not None and 0 <= value <= 1 else None
 
 
-def normalize_result(result) -> tuple[list[dict], int, str]:
-    count = len(result.pose_landmarks)
-    if count != 1:
-        return missing_landmarks(), count, 'no_pose' if count == 0 else 'multiple_poses'
-    raw = result.pose_landmarks[0]
+def normalize_candidate(raw) -> list[dict]:
     if len(raw) != 33:
         raise PoseError('模型返回的关键点布局异常，结果未采用。')
     points = []
@@ -88,7 +85,23 @@ def normalize_result(result) -> tuple[list[dict], int, str]:
                        'visibility':confidence(getattr(point,'visibility',None)),
                        'presence':confidence(getattr(point,'presence',None)),
                        'state':'observed' if image is not None else 'missing'})
-    return points, count, 'single_model_pose'
+    return points
+
+
+def normalize_result(result) -> tuple[list[dict], int, str]:
+    count = len(result.pose_landmarks)
+    if count != 1:
+        return missing_landmarks(), count, 'no_pose' if count == 0 else 'multiple_poses'
+    return normalize_candidate(result.pose_landmarks[0]), count, 'single_model_pose'
+
+
+def track_result(result, tracker, timestamp_ms, single_points):
+    candidates = ([single_points] if len(result.pose_landmarks) == 1 else
+                  [normalize_candidate(raw) for raw in result.pose_landmarks])
+    # Only visible, in-frame points may establish a location or appear in the comparison.
+    candidates = [[p for p in candidate if drawable(p)] for candidate in candidates]
+    selected, reason = tracker.select_best_candidate(candidates, timestamp_ms)
+    return {'reason': reason, 'landmarks': selected or []}
 
 
 def drawable(point: dict, config: dict | None = None) -> bool:
@@ -153,6 +166,7 @@ def extract_pose(video: PreviewVideo, start: int, end: int, *, correct_mirror=Fa
         min_pose_presence_confidence=CONFIG['presence_confidence'],
         min_tracking_confidence=CONFIG['tracking_confidence'],output_segmentation_masks=False)
     frames, diagnostics = [], []
+    tracker = SubjectTracker()
     started = time.perf_counter()
     try:
         with mp.tasks.vision.PoseLandmarker.create_from_options(options) as detector:
@@ -166,7 +180,8 @@ def extract_pose(video: PreviewVideo, start: int, end: int, *, correct_mirror=Fa
                     points,count,status = normalize_result(result)
                     frames.append({'source_frame_index':frame.source_frame_index,'timestamp_ms':frame.timestamp_ms,'landmarks':points})
                     diagnostics.append({'source_frame_index':frame.source_frame_index,'engine_timestamp_ms':clocks[offset],
-                                        'detected_count_capped':count,'status':status})
+                                        'detected_count_capped':count,'status':status,
+                                        'subject_tracking': track_result(result, tracker, frame.timestamp_ms, points)})
                     if progress and (offset % 15 == 0 or frame.source_frame_index == end):
                         progress(offset+1,end-start+1)
                     if frame.source_frame_index == end:

@@ -31,6 +31,24 @@ def fixture_run(video,start=0,end=2,mirror=False):
 
 
 class PoseTests(unittest.TestCase):
+    def test_tracking_alongside_baseline_across_dropout(self):
+        from boxing_coach.pose import track_result
+        from boxing_coach.subject_tracker import SubjectTracker
+        tracker = SubjectTracker()
+        def step(ms, *people):
+            raw = SimpleNamespace(pose_landmarks=list(people))
+            points, _, status = normalize_result(raw)
+            return status, track_result(raw, tracker, ms, points)
+        near = [raw_point(x=0.2)] * 33
+        far = [raw_point(x=0.9)] * 33
+        step(0, near)
+        status, chosen = step(30, far, near)
+        self.assertEqual(status, 'multiple_poses')
+        self.assertEqual(chosen['landmarks'][11]['image']['x'], 0.2)
+        step(60)
+        self.assertEqual(step(300, far)[1], {'reason':'impostor_jump_rejected','landmarks':[]})
+        self.assertEqual(step(400, [raw_point(visibility=0.1)]*33)[1]['reason'], 'no_reliable_torso')
+
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -111,6 +129,20 @@ class PoseTests(unittest.TestCase):
         self.assertEqual(len(app.error),1)
         self.assertFalse(any(n.key=='pose_index' for n in app.number_input))
         self.assertEqual(len(app.exception),0)
+
+    def test_subject_comparison_renders_rejected_frame_without_changing_reviews(self):
+        result = fixture_run(self.video)
+        result.diagnostics[0]['subject_tracking'] = {'reason':'impostor_jump_rejected', 'landmarks':[]}
+        app = AppTest.from_file(str(ROOT/'app/main.py'), default_timeout=30).run()
+        app.text_input(key='input_path').set_value(str(self.path))
+        app.button(key='FormSubmitter:open_video-打开视频').click().run()
+        with patch('boxing_coach.pose_ui.extract_pose', return_value=result):
+            app.button(key='run_pose').click().run()
+        app.checkbox(key='compare_subject_tracking').check().run()
+        self.assertFalse(app.exception)
+        captions = [caption for group in app.get('image') for caption in group.captions]
+        self.assertIn('跟踪试验 · 源帧 0 · 位置跳变，本帧隐藏', captions)
+        self.assertEqual(app.session_state.pose_reviews, {})
 
     def test_review_navigation_records_and_reset(self):
         import copy

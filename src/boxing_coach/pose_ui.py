@@ -272,6 +272,18 @@ def render_pose_panel(video,start,end,mirror):
     elif decision['hidden_parts']:
         st.warning('此帧部分显示；未显示：'+'、'.join(decision['hidden_parts'])+'。'+reason_text(decision))
     right.image(overlay,caption='左侧青蓝圆点 · 右侧橙色方点；通过过滤的部位才绘制，绘制结果用于对照原片',width='stretch')
+    tracking = diagnostic.get('subject_tracking')
+    if tracking and st.checkbox('查看主训练者跟踪对照', key='compare_subject_tracking'):
+        labels = {
+            'initial_or_reacquired': '按可见性和画面位置初选',
+            'tracked_match': '匹配到邻近候选',
+            'impostor_jump_rejected': '位置跳变，本帧隐藏',
+            'no_reliable_torso': '可见躯干关键点不足，本帧隐藏',
+            'no_candidate': '未检出候选，本帧隐藏',
+        }
+        st.image(draw_pose(decoded.image_rgb, tracking),
+                 caption=f"跟踪试验 · 源帧 {index} · {labels[tracking['reason']]}", width='stretch')
+        st.caption('请对照原画确认是否跟对人。下方核对记录和证据包仍对应上方原有骨架。')
     evidence_key=(cached.key,index,VERSION)
     prepared=st.session_state.get('pose_evidence_bundle')
     if prepared is not None and prepared['key'] != evidence_key:
