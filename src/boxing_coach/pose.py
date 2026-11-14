@@ -7,13 +7,14 @@ import json
 import math
 from pathlib import Path
 import time
+from typing import Any
 
 import numpy as np
 
 from .model_assets import AssetError, find_project_root, load_manifest, select_asset, verify_asset, sha256_file
 from .preview import PreviewVideo, selection_times
+from .subject_tracker import SubjectTracker, resolve_tracker
 from .video_io import decode_video
-from .subject_tracker import SubjectTracker
 
 
 CONFIG = {
@@ -88,11 +89,11 @@ def normalize_candidate(raw) -> list[dict]:
     return points
 
 
-def normalize_result(result) -> tuple[list[dict], int, str]:
-    count = len(result.pose_landmarks)
-    if count != 1:
-        return missing_landmarks(), count, 'no_pose' if count == 0 else 'multiple_poses'
-    return normalize_candidate(result.pose_landmarks[0]), count, 'single_model_pose'
+_normalize_single_pose = normalize_candidate
+
+
+def normalize_candidates(result) -> list[list[dict]]:
+    return [normalize_candidate(raw) for raw in result.pose_landmarks]
 
 
 def track_result(result, tracker, timestamp_ms, single_points):
@@ -102,6 +103,44 @@ def track_result(result, tracker, timestamp_ms, single_points):
     candidates = [[p for p in candidate if drawable(p)] for candidate in candidates]
     selected, reason = tracker.select_best_candidate(candidates, timestamp_ms)
     return {'reason': reason, 'landmarks': selected or []}
+
+
+def normalize_result_with_tracker(
+    result,
+    tracker: SubjectTracker,
+    timestamp_ms: float,
+) -> tuple[list[dict], int, str, str]:
+    candidates = normalize_candidates(result)
+    count = len(candidates)
+    ts = 0.0 if timestamp_ms is None else float(timestamp_ms)
+    if count == 0:
+        _, reason = tracker.select_best_candidate([], ts)
+        return missing_landmarks(), 0, 'no_pose', reason
+    chosen, reason = tracker.select_best_candidate(candidates, ts)
+    if chosen is not None:
+        return list(chosen), count, 'single_model_pose', reason
+    if count > 1:
+        return missing_landmarks(), count, 'multiple_poses', reason
+    return candidates[0], 1, 'single_model_pose', reason
+
+
+def normalize_result(
+    result,
+    *,
+    tracker: SubjectTracker | None = None,
+    timestamp_ms: float | None = None,
+) -> tuple[list[dict], int, str]:
+    if tracker is not None:
+        points, count, status, _ = normalize_result_with_tracker(
+            result,
+            tracker,
+            0.0 if timestamp_ms is None else timestamp_ms,
+        )
+        return points, count, status
+    count = len(result.pose_landmarks)
+    if count != 1:
+        return missing_landmarks(), count, 'no_pose' if count == 0 else 'multiple_poses'
+    return normalize_candidate(result.pose_landmarks[0]), count, 'single_model_pose'
 
 
 def drawable(point: dict, config: dict | None = None) -> bool:
@@ -135,15 +174,22 @@ class PoseRun:
 
     def summary(self) -> dict:
         total = len(self.frames)
-        statuses = {name:sum(d['status']==name for d in self.diagnostics)
-                    for name in ('no_pose','multiple_poses','single_model_pose')}
-        unavailable = {name:sum(not drawable(f['landmarks'][index],self.config) for f in self.frames)
+        statuses = {s:sum(d['status']==s for d in self.diagnostics) for s in ('single_model_pose','no_pose','multiple_poses')}
+        unavailable = {name: sum(not drawable(f['landmarks'][index],self.config) for f in self.frames)
                        for index,name in JOINTS.items()}
         return {'frames':total, **statuses, 'unavailable_joint_frames':unavailable,
                 'elapsed_seconds':round(self.elapsed_seconds,3)}
 
 
-def extract_pose(video: PreviewVideo, start: int, end: int, *, correct_mirror=False, progress=None) -> PoseRun:
+def extract_pose(
+    video: PreviewVideo,
+    start: int,
+    end: int,
+    *,
+    correct_mirror=False,
+    progress=None,
+    tracker: SubjectTracker | bool | None = None,
+) -> PoseRun:
     begin_ms, stop_ms = selection_times(video.inspection,start,end)
     if stop_ms-begin_ms > CONFIG['max_duration_ms'] or end-start+1 > CONFIG['max_frames']:
         raise PoseError('当前试跑每次最多选择 30 秒、1800 帧，请缩短区间。')
@@ -166,7 +212,7 @@ def extract_pose(video: PreviewVideo, start: int, end: int, *, correct_mirror=Fa
         min_pose_presence_confidence=CONFIG['presence_confidence'],
         min_tracking_confidence=CONFIG['tracking_confidence'],output_segmentation_masks=False)
     frames, diagnostics = [], []
-    tracker = SubjectTracker()
+    active_tracker = resolve_tracker(tracker) if tracker is not None else SubjectTracker()
     started = time.perf_counter()
     try:
         with mp.tasks.vision.PoseLandmarker.create_from_options(options) as detector:
@@ -178,10 +224,14 @@ def extract_pose(video: PreviewVideo, start: int, end: int, *, correct_mirror=Fa
                     image = mp.Image(image_format=mp.ImageFormat.SRGB,data=frame.image_rgb)
                     result = detector.detect_for_video(image,clocks[offset])
                     points,count,status = normalize_result(result)
+                    tracking_info = track_result(result, active_tracker, frame.timestamp_ms, points) if active_tracker else None
                     frames.append({'source_frame_index':frame.source_frame_index,'timestamp_ms':frame.timestamp_ms,'landmarks':points})
-                    diagnostics.append({'source_frame_index':frame.source_frame_index,'engine_timestamp_ms':clocks[offset],
-                                        'detected_count_capped':count,'status':status,
-                                        'subject_tracking': track_result(result, tracker, frame.timestamp_ms, points)})
+                    diag = {'source_frame_index':frame.source_frame_index,'engine_timestamp_ms':clocks[offset],
+                            'detected_count_capped':count,'status':status}
+                    if tracking_info:
+                        diag['subject_tracking'] = tracking_info
+                        diag['tracker_reason'] = tracking_info['reason']
+                    diagnostics.append(diag)
                     if progress and (offset % 15 == 0 or frame.source_frame_index == end):
                         progress(offset+1,end-start+1)
                     if frame.source_frame_index == end:

@@ -8,6 +8,7 @@ Designed to resolve T05 tracking loss and impostor switching:
 from __future__ import annotations
 
 import math
+from types import SimpleNamespace
 from typing import Any, Sequence
 
 TORSO_JOINTS = (11, 12, 23, 24)  # Left shoulder, Right shoulder, Left hip, Right hip
@@ -173,3 +174,140 @@ class SubjectTracker:
         self.last_seen_landmarks = list(landmarks)
         self.total_frames_tracked += 1
         self.consecutive_missing = 0
+
+
+def resolve_tracker(tracker: SubjectTracker | bool | None) -> SubjectTracker | None:
+    """Resolve an optional tracker flag or instance into a fresh SubjectTracker."""
+    if tracker is True:
+        return SubjectTracker()
+    if isinstance(tracker, SubjectTracker):
+        tracker.reset()
+        return tracker
+    if tracker in (None, False):
+        return None
+    raise TypeError('tracker 必须是 SubjectTracker、bool 或 None。')
+
+
+def compare_recovery_points(
+    run: Any,
+    tracker: SubjectTracker | None = None,
+) -> dict[str, Any]:
+    """Compare baseline display decisions against SubjectTracker on recovery points."""
+    from .quality import assess_frames
+    from .review import recovery_references
+
+    baseline_diagnostics = [
+        {k: v for k, v in diag.items() if k != 'tracker_reason'}
+        for diag in run.diagnostics
+    ]
+    baseline_run = SimpleNamespace(
+        frames=run.frames,
+        diagnostics=baseline_diagnostics,
+        config=getattr(run, 'config', None),
+    )
+    before_decisions = assess_frames(baseline_run)
+
+    active_tracker = resolve_tracker(True if tracker is None else tracker)
+    assert active_tracker is not None
+    shadow_tracker = SubjectTracker(
+        max_recovery_gap_ms=active_tracker.max_recovery_gap_ms,
+        max_torso_jump_normalized=active_tracker.max_torso_jump_normalized,
+        center_bias_weight=active_tracker.center_bias_weight,
+    )
+    after_decisions = assess_frames(run, tracker=active_tracker)
+
+    tracker_reasons: dict[int, str] = {}
+    for frame, diag in zip(run.frames, run.diagnostics, strict=True):
+        idx = frame['source_frame_index']
+        reason = diag.get('tracker_reason')
+        if reason is None:
+            if diag['status'] == 'single_model_pose':
+                _, reason = shadow_tracker.select_best_candidate(
+                    [frame['landmarks']],
+                    frame['timestamp_ms'],
+                )
+            else:
+                _, reason = shadow_tracker.select_best_candidate([], frame['timestamp_ms'])
+        tracker_reasons[idx] = reason
+
+    multi_refs = recovery_references(run.frames, before_decisions)
+    frames_by_idx = {f['source_frame_index']: f for f in run.frames}
+    after_by_idx = {
+        f['source_frame_index']: dec
+        for f, dec in zip(run.frames, after_decisions, strict=True)
+    }
+    before_by_idx = {
+        f['source_frame_index']: dec
+        for f, dec in zip(run.frames, before_decisions, strict=True)
+    }
+
+    recovery_refs: dict[int, int | None] = {}
+    last_visible: int | None = None
+    for offset, (frame, diag, before_dec) in enumerate(
+        zip(run.frames, baseline_diagnostics, before_decisions, strict=True)
+    ):
+        idx = frame['source_frame_index']
+        if idx in multi_refs:
+            recovery_refs[idx] = multi_refs[idx]
+        elif offset > 0:
+            prev_diag = baseline_diagnostics[offset - 1]
+            prev_before = before_decisions[offset - 1]
+            if (not prev_before['show'] or prev_diag['status'] != 'single_model_pose') and diag['status'] == 'single_model_pose':
+                recovery_refs.setdefault(idx, last_visible)
+        if before_dec['show']:
+            last_visible = idx
+
+    points = []
+    kept_visible_count = 0
+    newly_rejected_jump_count = 0
+    unchanged_hidden_count = 0
+
+    for frame in run.frames:
+        idx = frame['source_frame_index']
+        if idx not in recovery_refs:
+            continue
+        ref_idx = recovery_refs[idx]
+        before_dec = before_by_idx[idx]
+        after_dec = after_by_idx[idx]
+
+        gap_ms: float | None = None
+        jump_dist: float | None = None
+        if ref_idx is not None and ref_idx in frames_by_idx:
+            ref_frame = frames_by_idx[ref_idx]
+            gap_ms = round(float(frame['timestamp_ms']) - float(ref_frame['timestamp_ms']), 3)
+            ref_center = compute_torso_center(ref_frame['landmarks'])
+            curr_center = compute_torso_center(frame['landmarks'])
+            if ref_center is not None and curr_center is not None:
+                jump_dist = round(
+                    math.hypot(curr_center[0] - ref_center[0], curr_center[1] - ref_center[1]),
+                    4,
+                )
+
+        before_show = bool(before_dec['show'])
+        after_show = bool(after_dec['show'])
+        if before_show and after_show:
+            kept_visible_count += 1
+        elif before_show and not after_show:
+            newly_rejected_jump_count += 1
+        elif not before_show and not after_show:
+            unchanged_hidden_count += 1
+
+        points.append({
+            'source_frame_index': idx,
+            'reference_frame_index': ref_idx,
+            'gap_ms': gap_ms,
+            'torso_jump_distance': jump_dist,
+            'tracker_reason': tracker_reasons[idx],
+            'before_show': before_show,
+            'after_show': after_show,
+            'before_reasons': list(before_dec['reasons']),
+            'after_reasons': list(after_dec['reasons']),
+        })
+
+    return {
+        'total_recovery_points': len(points),
+        'kept_visible_count': kept_visible_count,
+        'newly_rejected_jump_count': newly_rejected_jump_count,
+        'unchanged_hidden_count': unchanged_hidden_count,
+        'points': points,
+    }

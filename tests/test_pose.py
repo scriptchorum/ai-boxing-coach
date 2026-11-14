@@ -10,8 +10,10 @@ from jsonschema import Draft202012Validator
 from streamlit.testing.v1 import AppTest
 
 from test_video_io import write_synthetic_video
-from boxing_coach.pose import (CONFIG,PoseRun,PoseError,engine_timestamps,normalize_result,drawable,
-                               draw_pose,run_key,model_identity,runtime_versions)
+from boxing_coach.pose import (CONFIG,PoseRun,PoseError,engine_timestamps,normalize_result,
+                               normalize_result_with_tracker,drawable,draw_pose,run_key,
+                               model_identity,runtime_versions,missing_landmarks)
+from boxing_coach.subject_tracker import SubjectTracker
 from boxing_coach.preview import load_preview
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -63,6 +65,45 @@ class PoseTests(unittest.TestCase):
             self.assertEqual(count,len(poses))
             self.assertEqual(len(points),33)
             self.assertTrue(all(p['image'] is None and p['state']=='missing' for p in points))
+
+    def test_tracker_disambiguates_multiple_candidates_and_flags_jumps(self):
+        tracker = SubjectTracker(max_recovery_gap_ms=1500.0, max_torso_jump_normalized=0.35)
+        athlete0 = [raw_point(x=0.5, y=0.5) for _ in range(33)]
+        bystander = [raw_point(x=0.1, y=0.2) for _ in range(33)]
+        athlete1 = [raw_point(x=0.51, y=0.5) for _ in range(33)]
+        bystander2 = [raw_point(x=0.9, y=0.8) for _ in range(33)]
+
+        pts0, cnt0, st0, reason0 = normalize_result_with_tracker(
+            SimpleNamespace(pose_landmarks=[athlete0]), tracker, 0.0
+        )
+        self.assertEqual((cnt0, st0, reason0), (1, 'single_model_pose', 'initial_or_reacquired'))
+        self.assertAlmostEqual(pts0[11]['image']['x'], 0.5)
+
+        pts1, cnt1, st1 = normalize_result(
+            SimpleNamespace(pose_landmarks=[bystander, athlete1]),
+            tracker=tracker,
+            timestamp_ms=33.0,
+        )
+        self.assertEqual((cnt1, st1), (2, 'single_model_pose'))
+        self.assertAlmostEqual(pts1[11]['image']['x'], 0.51)
+
+        pts2, cnt2, st2, reason2 = normalize_result_with_tracker(
+            SimpleNamespace(pose_landmarks=[bystander]), tracker, 400.0
+        )
+        self.assertEqual((cnt2, st2, reason2), (1, 'single_model_pose', 'impostor_jump_rejected'))
+        self.assertAlmostEqual(pts2[11]['image']['x'], 0.1)
+
+        pts3, cnt3, st3, reason3 = normalize_result_with_tracker(
+            SimpleNamespace(pose_landmarks=[bystander, bystander2]), tracker, 500.0
+        )
+        self.assertEqual((cnt3, st3, reason3), (2, 'multiple_poses', 'impostor_jump_rejected'))
+        self.assertEqual(pts3, missing_landmarks())
+
+        pts4, cnt4, st4, reason4 = normalize_result_with_tracker(
+            SimpleNamespace(pose_landmarks=[]), tracker, 533.0
+        )
+        self.assertEqual((cnt4, st4, reason4), (0, 'no_pose', 'no_candidate'))
+        self.assertEqual(pts4, missing_landmarks())
 
     def test_low_confidence_out_of_frame_and_nonfinite_preserve_missing_evidence(self):
         points=[raw_point() for _ in range(33)]
