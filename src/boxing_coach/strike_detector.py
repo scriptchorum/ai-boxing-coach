@@ -8,8 +8,12 @@ and evaluates the boxer's defensive posture and power generation:
 """
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any, Iterable, Sequence
 
+from jsonschema import Draft202012Validator
+
+from .model_assets import find_project_root
 from .muaythai_metrics import (
     LEFT_ELBOW,
     LEFT_HIP,
@@ -28,6 +32,15 @@ from .quality_gate import clip_quality_report, metric_quality_gate
 if TYPE_CHECKING:
     from .pose import PoseRun
     from .subject_tracker import SubjectTracker
+
+
+def _quality_validator() -> Draft202012Validator:
+    schema = json.loads((find_project_root() / 'schemas/analysis-quality.schema.json').read_text(encoding='utf-8'))
+    Draft202012Validator.check_schema(schema)
+    return Draft202012Validator(schema)
+
+
+QUALITY_VALIDATOR = _quality_validator()
 
 
 class StrikeAuditor:
@@ -283,6 +296,7 @@ class StrikeAuditor:
                 )
 
         return {
+            'stance': self.stance,
             'clip_report': clip_report,
             'single_person_confirmed': single_person_confirmed,
             'candidate_strike_count': raw_analysis['total_strikes'],
@@ -295,3 +309,32 @@ class StrikeAuditor:
             'strikes': gated_strikes,
             'observations': observations,
         }
+
+
+def export_strike_audit_json(audit_result: dict[str, Any]) -> bytes:
+    """Serialize a privacy-safe gated strike audit report verified against contracts."""
+    reports_to_check = [audit_result.get('clip_report')]
+    for strike in audit_result.get('strikes', ()):
+        gates = strike.get('gates', {})
+        for gate_name in ('extension', 'rear_guard', 'hip_rotation'):
+            reports_to_check.append(gates.get(gate_name))
+    for report in reports_to_check:
+        if not isinstance(report, dict) or next(QUALITY_VALIDATOR.iter_errors(report), None) is not None:
+            raise ValueError('击打审计报告未通过质量门禁契约校验。')
+
+    payload = {
+        'format': 'boxing-strike-audit-0.1',
+        'stance': audit_result.get('stance', 'orthodox'),
+        'single_person_confirmed': bool(audit_result['single_person_confirmed']),
+        'candidate_strike_count': int(audit_result['candidate_strike_count']),
+        'eligible_strike_count': int(audit_result['eligible_strike_count']),
+        'lead_strikes': int(audit_result['lead_strikes']),
+        'rear_strikes': int(audit_result['rear_strikes']),
+        'guard_drops': audit_result['guard_drops'],
+        'guard_drop_rate': audit_result['guard_drop_rate'],
+        'avg_hip_rotation_deg': audit_result['avg_hip_rotation_deg'],
+        'observations': list(audit_result['observations']),
+        'clip_report': audit_result['clip_report'],
+        'strikes': list(audit_result['strikes']),
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False).encode('utf-8')

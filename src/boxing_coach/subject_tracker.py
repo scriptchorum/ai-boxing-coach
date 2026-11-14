@@ -52,6 +52,17 @@ def compute_torso_bbox(landmarks: Sequence[dict]) -> tuple[float, float, float, 
     return (min(xs), min(ys), max(xs), max(ys))
 
 
+def compute_torso_size(landmarks: Sequence[dict]) -> float | None:
+    """Compute diagonal length of the observed torso bounding box."""
+    if compute_torso_center(landmarks) is None:
+        return None
+    bbox = compute_torso_bbox(landmarks)
+    if bbox is None:
+        return None
+    diag = math.hypot(bbox[2] - bbox[0], bbox[3] - bbox[1])
+    return diag if diag > 1e-4 else None
+
+
 def score_boxing_visibility(landmarks: Sequence[dict]) -> float:
     """Return average visibility score across key boxing landmarks."""
     points_by_idx = {p['index']: p for p in landmarks if 'index' in p}
@@ -73,15 +84,21 @@ class SubjectTracker:
         max_recovery_gap_ms: float = 1500.0,
         max_torso_jump_normalized: float = 0.35,
         center_bias_weight: float = 0.2,
+        min_torso_scale_ratio: float = 0.55,
+        max_torso_scale_ratio: float = 1.80,
     ) -> None:
         self.max_recovery_gap_ms = max_recovery_gap_ms
         self.max_torso_jump_normalized = max_torso_jump_normalized
         self.center_bias_weight = center_bias_weight
+        self.min_torso_scale_ratio = min_torso_scale_ratio
+        self.max_torso_scale_ratio = max_torso_scale_ratio
 
         # State
         self.last_seen_center: tuple[float, float] | None = None
         self.last_seen_timestamp_ms: float | None = None
         self.last_seen_landmarks: list[dict] | None = None
+        self.last_seen_torso_size: float | None = None
+        self.in_multi_pose_ambiguity: bool = False
         self.total_frames_tracked: int = 0
         self.consecutive_missing: int = 0
 
@@ -89,6 +106,8 @@ class SubjectTracker:
         self.last_seen_center = None
         self.last_seen_timestamp_ms = None
         self.last_seen_landmarks = None
+        self.last_seen_torso_size = None
+        self.in_multi_pose_ambiguity = False
         self.total_frames_tracked = 0
         self.consecutive_missing = 0
 
@@ -99,11 +118,21 @@ class SubjectTracker:
     ) -> tuple[Sequence[dict] | None, str]:
         """Disambiguate among multiple pose candidates.
 
+        Freezes the confirmed single-person anchor and torso scale whenever
+        multiple candidates are present, preventing transition drift into
+        background persons or equipment.
+
         Returns: (chosen_landmarks or None, reason_code)
         """
         if not candidates:
             self.consecutive_missing += 1
             return None, 'no_candidate'
+
+        in_window = (
+            self.last_seen_center is not None
+            and self.last_seen_timestamp_ms is not None
+            and 0 <= (timestamp_ms - self.last_seen_timestamp_ms) <= self.max_recovery_gap_ms
+        )
 
         # Score each candidate
         scored = []
@@ -112,14 +141,16 @@ class SubjectTracker:
             if not center:
                 continue
 
+            torso_size = compute_torso_size(cand)
             vis = score_boxing_visibility(cand)
             dist_to_prev = None
-            if self.last_seen_center is not None and self.last_seen_timestamp_ms is not None:
-                dt = timestamp_ms - self.last_seen_timestamp_ms
-                if 0 <= dt <= self.max_recovery_gap_ms:
-                    dx = center[0] - self.last_seen_center[0]
-                    dy = center[1] - self.last_seen_center[1]
-                    dist_to_prev = math.hypot(dx, dy)
+            scale_ratio = None
+            if in_window and self.last_seen_center is not None:
+                dx = center[0] - self.last_seen_center[0]
+                dy = center[1] - self.last_seen_center[1]
+                dist_to_prev = math.hypot(dx, dy)
+                if torso_size is not None and self.last_seen_torso_size is not None and self.last_seen_torso_size > 1e-4:
+                    scale_ratio = torso_size / self.last_seen_torso_size
 
             # Centrality bias (distance from (0.5, 0.5))
             dist_from_center = math.hypot(center[0] - 0.5, center[1] - 0.5)
@@ -127,40 +158,53 @@ class SubjectTracker:
             scored.append({
                 'landmarks': cand,
                 'center': center,
+                'torso_size': torso_size,
                 'visibility': vis,
                 'dist_to_prev': dist_to_prev,
+                'scale_ratio': scale_ratio,
                 'dist_from_center': dist_from_center,
             })
 
         if not scored:
+            if len(candidates) > 1:
+                self.in_multi_pose_ambiguity = True
             self.consecutive_missing += 1
             return None, 'no_reliable_torso'
 
-        # If we have previous history within recovery window, prioritize proximity to last seen
-        if self.last_seen_center is not None and self.last_seen_timestamp_ms is not None:
-            dt = timestamp_ms - self.last_seen_timestamp_ms
-            if 0 <= dt <= self.max_recovery_gap_ms:
-                # Filter out candidates that jump unrealistically far (e.g. background person)
-                valid_proximities = [
-                    c for c in scored
-                    if c['dist_to_prev'] is not None and c['dist_to_prev'] <= self.max_torso_jump_normalized
-                ]
-                if not valid_proximities:
-                    # All candidates jumped too far -> likely impostors in background
-                    self.consecutive_missing += 1
-                    return None, 'impostor_jump_rejected'
+        # If we have previous history within recovery window, prioritize proximity and torso scale consistency
+        if in_window:
+            valid_proximities = [
+                c for c in scored
+                if c['dist_to_prev'] is not None
+                and c['dist_to_prev'] <= self.max_torso_jump_normalized
+                and (c['scale_ratio'] is None or (self.min_torso_scale_ratio <= c['scale_ratio'] <= self.max_torso_scale_ratio))
+            ]
+            if not valid_proximities:
+                if len(candidates) > 1:
+                    self.in_multi_pose_ambiguity = True
+                self.consecutive_missing += 1
+                return None, 'impostor_jump_rejected'
 
-                # Best is minimum distance to previous known position
-                best = min(valid_proximities, key=lambda c: c['dist_to_prev'])
-                self._update_state(best['center'], timestamp_ms, best['landmarks'])
-                return best['landmarks'], 'tracked_match'
+            best = min(valid_proximities, key=lambda c: c['dist_to_prev'])
+            if len(candidates) == 1:
+                self._update_state(best['center'], timestamp_ms, best['landmarks'], best['torso_size'])
+            else:
+                self.in_multi_pose_ambiguity = True
+                self.total_frames_tracked += 1
+                self.consecutive_missing = 0
+            return best['landmarks'], 'tracked_match'
 
         # Cold start or post-gap reset: pick the most central candidate with best visibility
         best = max(
             scored,
             key=lambda c: c['visibility'] - (self.center_bias_weight * c['dist_from_center']),
         )
-        self._update_state(best['center'], timestamp_ms, best['landmarks'])
+        if len(candidates) == 1:
+            self._update_state(best['center'], timestamp_ms, best['landmarks'], best['torso_size'])
+        else:
+            self.in_multi_pose_ambiguity = True
+            self.total_frames_tracked += 1
+            self.consecutive_missing = 0
         return best['landmarks'], 'initial_or_reacquired'
 
     def _update_state(
@@ -168,10 +212,13 @@ class SubjectTracker:
         center: tuple[float, float],
         timestamp_ms: float,
         landmarks: Sequence[dict],
+        torso_size: float | None = None,
     ) -> None:
         self.last_seen_center = center
         self.last_seen_timestamp_ms = timestamp_ms
         self.last_seen_landmarks = list(landmarks)
+        self.last_seen_torso_size = compute_torso_size(landmarks) if torso_size is None else torso_size
+        self.in_multi_pose_ambiguity = False
         self.total_frames_tracked += 1
         self.consecutive_missing = 0
 
@@ -213,6 +260,8 @@ def compare_recovery_points(
         max_recovery_gap_ms=active_tracker.max_recovery_gap_ms,
         max_torso_jump_normalized=active_tracker.max_torso_jump_normalized,
         center_bias_weight=active_tracker.center_bias_weight,
+        min_torso_scale_ratio=active_tracker.min_torso_scale_ratio,
+        max_torso_scale_ratio=active_tracker.max_torso_scale_ratio,
     )
     after_decisions = assess_frames(run, tracker=active_tracker)
 
@@ -272,6 +321,7 @@ def compare_recovery_points(
 
         gap_ms: float | None = None
         jump_dist: float | None = None
+        scale_ratio: float | None = None
         if ref_idx is not None and ref_idx in frames_by_idx:
             ref_frame = frames_by_idx[ref_idx]
             gap_ms = round(float(frame['timestamp_ms']) - float(ref_frame['timestamp_ms']), 3)
@@ -282,6 +332,10 @@ def compare_recovery_points(
                     math.hypot(curr_center[0] - ref_center[0], curr_center[1] - ref_center[1]),
                     4,
                 )
+            ref_size = compute_torso_size(ref_frame['landmarks'])
+            curr_size = compute_torso_size(frame['landmarks'])
+            if ref_size is not None and curr_size is not None and ref_size > 1e-4:
+                scale_ratio = round(curr_size / ref_size, 4)
 
         before_show = bool(before_dec['show'])
         after_show = bool(after_dec['show'])
@@ -297,6 +351,7 @@ def compare_recovery_points(
             'reference_frame_index': ref_idx,
             'gap_ms': gap_ms,
             'torso_jump_distance': jump_dist,
+            'torso_scale_ratio': scale_ratio,
             'tracker_reason': tracker_reasons[idx],
             'before_show': before_show,
             'after_show': after_show,

@@ -9,7 +9,7 @@ from .synced_player import render_synced_player
 from .quality import assess_frames, reason_text, display_frame, VERSION, LABELS
 from .review import FILTERS, REACQUIRED, VERDICTS, recovery_references, review_indices, neighbors, summarize_reviews, export_reviews, import_reviews, read_review_file, MAX_REVIEW_BYTES
 from .evidence import EvidenceError, MAX_DEMO_FRAMES, build_demo_report, build_evidence_bundle
-from .strike_detector import StrikeAuditor
+from .strike_detector import StrikeAuditor, export_strike_audit_json
 from .subject_tracker import SubjectTracker
 
 
@@ -20,6 +20,7 @@ def clear_pose():
     st.session_state.pop('pose_review_filter',None)
     st.session_state.pop('review_unrecorded_only',None)
     st.session_state.pop('pose_evidence_bundle',None)
+    st.session_state.pop('pose_strike_audit',None)
     st.session_state.pop('pose_demo_frames',None)
     st.session_state.pop('pose_demo_report',None)
 
@@ -137,7 +138,7 @@ def render_strike_audit_section(cached, tracker_enabled):
         c1, c2 = st.columns(2)
         stance_label = c1.selectbox('站架选择', ['正架 (右手后手 / Orthodox)', '反架 (左手后手 / Southpaw)'], key='audit_stance_select')
         stance = 'orthodox' if 'Orthodox' in stance_label else 'southpaw'
-        single_person = c2.checkbox('目视确认：训练区域无背景人物干扰 (解锁合规指标计算)', value=True, key='audit_single_person_confirmed')
+        single_person = c2.checkbox('目视确认：训练区域无背景人物干扰 (解锁合规指标计算)', value=False, key='audit_single_person_confirmed')
 
         auditor = StrikeAuditor(stance=stance)
         audit_res = auditor.audit_pose_run(cached, single_person_confirmed=single_person, tracker=tracker_enabled)
@@ -176,6 +177,23 @@ def render_strike_audit_section(cached, tracker_enabled):
             strike_indices = [s['frame_index'] for s in gated_strikes]
             sel_strike_frame = st.selectbox('选择要复核的击打瞬间帧', strike_indices, format_func=lambda i: f"源帧 {i}", key='sel_strike_frame_jump')
             st.button('跳转至该击打峰值帧', key='jump_strike_frame_btn', on_click=go_review, args=(sel_strike_frame,))
+
+        audit_key = (cached.key, stance, bool(single_person), bool(tracker_enabled))
+        if st.button('生成击打与门禁审计摘要', key='strike_audit_prepare'):
+            st.session_state.pose_strike_audit = {
+                'key': audit_key,
+                'json': export_strike_audit_json(audit_res),
+            }
+        saved_audit = st.session_state.get('pose_strike_audit')
+        if saved_audit and saved_audit.get('key') == audit_key:
+            st.download_button(
+                '下载击打与门禁审计摘要（JSON）',
+                data=saved_audit['json'],
+                file_name='boxing-strike-audit.json',
+                mime='application/json',
+                key='strike_audit_download',
+                on_click='ignore',
+            )
 
 
 def render_pose_panel(video,start,end,mirror):

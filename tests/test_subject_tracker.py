@@ -8,6 +8,7 @@ from boxing_coach.subject_tracker import (
     compare_recovery_points,
     compute_torso_center,
     compute_torso_bbox,
+    compute_torso_size,
     resolve_tracker,
     score_boxing_visibility,
 )
@@ -159,6 +160,61 @@ class SubjectTrackerTests(unittest.TestCase):
         self.assertTrue(by_frame[16]['after_show'])
         self.assertFalse(by_frame[14]['before_show'])
         self.assertFalse(by_frame[14]['after_show'])
+
+    def test_multi_pose_ambiguity_freezes_anchor_and_rejects_drift_or_scale_mismatch(self):
+        athlete_f0 = make_person(0.5, 0.5)
+        self.assertGreater(compute_torso_size(athlete_f0), 0.2)
+
+        chosen, reason = self.tracker.select_best_candidate([athlete_f0], timestamp_ms=0.0)
+        self.assertIsNotNone(chosen)
+        self.assertEqual(reason, 'initial_or_reacquired')
+        self.assertFalse(self.tracker.in_multi_pose_ambiguity)
+        self.assertEqual(self.tracker.last_seen_center, (0.5, 0.5))
+
+        bystander = make_person(0.1, 0.5)
+        drift_1 = make_person(0.68, 0.5)
+        drift_2 = make_person(0.85, 0.5)
+
+        chosen_f1, reason_f1 = self.tracker.select_best_candidate([bystander, drift_1], timestamp_ms=33.0)
+        self.assertIsNotNone(chosen_f1)
+        self.assertEqual(reason_f1, 'tracked_match')
+        self.assertTrue(self.tracker.in_multi_pose_ambiguity)
+        self.assertEqual(self.tracker.last_seen_center, (0.5, 0.5))
+
+        chosen_f2, reason_f2 = self.tracker.select_best_candidate([bystander, drift_2], timestamp_ms=66.0)
+        self.assertIsNone(chosen_f2)
+        self.assertEqual(reason_f2, 'impostor_jump_rejected')
+        self.assertTrue(self.tracker.in_multi_pose_ambiguity)
+        self.assertEqual(self.tracker.last_seen_center, (0.5, 0.5))
+
+        chosen_f3, reason_f3 = self.tracker.select_best_candidate([drift_2], timestamp_ms=100.0)
+        self.assertIsNone(chosen_f3)
+        self.assertEqual(reason_f3, 'impostor_jump_rejected')
+
+        small_impostor = [
+            (
+                {
+                    **p,
+                    'image': {
+                        'x': 0.52 + (p['image']['x'] - 0.5) * 0.35,
+                        'y': 0.5 + (p['image']['y'] - 0.5) * 0.35,
+                        'z': p['image']['z'],
+                    },
+                }
+                if p.get('image') is not None
+                else p
+            )
+            for p in make_person(0.5, 0.5)
+        ]
+        chosen_f4, reason_f4 = self.tracker.select_best_candidate([small_impostor], timestamp_ms=133.0)
+        self.assertIsNone(chosen_f4)
+        self.assertEqual(reason_f4, 'impostor_jump_rejected')
+
+        athlete_back = make_person(0.53, 0.5)
+        chosen_f5, reason_f5 = self.tracker.select_best_candidate([athlete_back], timestamp_ms=166.0)
+        self.assertIsNotNone(chosen_f5)
+        self.assertEqual(reason_f5, 'tracked_match')
+        self.assertFalse(self.tracker.in_multi_pose_ambiguity)
 
 
 if __name__ == '__main__':

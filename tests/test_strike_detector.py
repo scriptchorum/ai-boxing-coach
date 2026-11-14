@@ -1,8 +1,9 @@
 """Tests for strike event detection and form quality auditing."""
+import json
 import unittest
 
 from boxing_coach.pose import CONFIG, PoseRun
-from boxing_coach.strike_detector import StrikeAuditor
+from boxing_coach.strike_detector import StrikeAuditor, export_strike_audit_json
 from tools.validate_quality_reports import validate_report
 
 
@@ -245,6 +246,29 @@ class StrikeDetectorTests(unittest.TestCase):
         self.assertIn('torso_position_jump', jumped['strikes'][0]['gates']['extension']['reason_codes'])
         self.assertIsNone(jumped['strikes'][0]['extension_ratio'])
         self.assertEqual(jumped['observations'], [])
+
+    def test_export_strike_audit_json_is_deterministic_and_privacy_safe(self):
+        frames = [
+            make_strike_frame(0, elbow_bend_y=0.48, wrist_x=0.45),
+            make_strike_frame(1, elbow_bend_y=0.45, wrist_x=0.55),
+            make_strike_frame(2, elbow_bend_y=0.35, wrist_x=0.75, rear_wrist_pos=(0.58, 0.25)),
+            make_strike_frame(3, elbow_bend_y=0.45, wrist_x=0.55),
+            make_strike_frame(4, elbow_bend_y=0.48, wrist_x=0.45),
+        ]
+        res = self.auditor.audit_pose_run(make_strike_pose_run(frames), single_person_confirmed=True)
+        blob1 = export_strike_audit_json(res)
+        blob2 = export_strike_audit_json(res)
+        self.assertEqual(blob1, blob2)
+
+        text = blob1.decode('utf-8')
+        self.assertNotIn('run_key', text)
+        self.assertNotIn('"landmarks"', text)
+        parsed = json.loads(text)
+        self.assertEqual(parsed['format'], 'boxing-strike-audit-0.1')
+        self.assertEqual(parsed['stance'], 'orthodox')
+        self.assertTrue(parsed['single_person_confirmed'])
+        self.assertEqual(parsed['eligible_strike_count'], 1)
+        self.assertAlmostEqual(parsed['avg_hip_rotation_deg'], 0.0, places=2)
 
 
 if __name__ == '__main__':

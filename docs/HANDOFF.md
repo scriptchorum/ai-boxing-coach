@@ -1,5 +1,20 @@
 # 项目交接
 
+## 2026年11月14日：多候选前序锚点冻结、躯干尺度门禁与击打审计导出（T05 恢复点复核收口）
+
+- **结论与目标**：针对此前“3 段误跟前连续出现 `multiple_poses` 导致历史单人阈值 `0.35` 失真”的复核循环，已在策略层完成结构化收口；**后续不再对这 3 段恢复帧做重复逐帧复核**。
+- **已完成改动**：
+  1. **T05 主体跟踪防漂移与躯干尺度门禁**（`src/boxing_coach/subject_tracker.py`）：
+     - 在 `SubjectTracker.select_best_candidate` 中，当 `len(candidates) > 1` 出现多候选模糊区间时冻结 `last_seen_center`、`last_seen_timestamp_ms` 与 `last_seen_torso_size`，防止在多人物同框期间漂移更新锚点；
+     - 新增 `compute_torso_size` 与躯干尺度比例门禁（`min_torso_scale_ratio=0.55`、`max_torso_scale_ratio=1.80`），过滤重入时的远景路人或前景异常尺度目标，并在 `compare_recovery_points` 中新增 `torso_scale_ratio` 诊断项。
+  2. **T06/T07 击打与门禁审计导出（隐私安全）**（`src/boxing_coach/strike_detector.py`、`src/boxing_coach/pose_ui.py`）：
+     - 新增 `export_strike_audit_json`，导出确定性、仅含数值指标与门禁状态的 JSON 审计摘要，并通过 `schemas/analysis-quality.schema.json` 校验，严格保留 `single_person_confirmed` 与 `must_be_null` 安全约束；
+     - 将姿态评估中的“本片段仅有一名主体”默认勾选收紧为 `False`，并通过“生成击打与门禁审计摘要”按需生成后提供 JSON 下载。
+  3. **单元测试补齐**（`tests/test_subject_tracker.py`、`tests/test_strike_detector.py`）：新增多候选锚点冻结与尺度门禁回归测试，以及击打审计 JSON 确定性与脱敏校验测试。
+- **下一步**：
+  1. 推进 T02/T05 真实多体型女性参与者采样核验（验证遮挡恢复与躯干尺度门禁在实拍多体型场景下的稳定度）；
+  2. 推进 T06/T07 击打指标与审计报告的端到端流程验收。
+
 ## 2026年11月14日：双机合并、试验过滤开关与前序画面检查
 
 已合并设备 B 的管线与界面改动及设备 A 的实拍核对。修复了取消过滤后缓存诊断仍影响显示的问题。“试用跟踪过滤”默认关闭，静态核对与连续回放使用相同的显示决定；关闭后恢复原显示规则，无需重新识别。用同一份合成识别结果切换关、开、关，验证两处显示一致。129 项 Python 测试、10 项播放器测试、3 份契约检查通过。
