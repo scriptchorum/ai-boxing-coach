@@ -214,7 +214,7 @@ def render_pose_panel(video,start,end,mirror):
         return
     st.button('清除本次关键点结果',on_click=clear_pose)
     render_review_files(cached,uploaded)
-    enable_tracker = st.checkbox('启用主目标持续追踪与防跳变过滤 (SubjectTracker)', value=True, key='enable_subject_tracker')
+    enable_tracker = st.checkbox('试用跟踪过滤（可能隐藏正确骨架）', value=False, key='trial_tracking_filter')
     decisions = assess_frames(cached, tracker=enable_tracker)
     st.info(f"分部位显示：{sum(not d['show'] for d in decisions)} 帧全部隐藏，{sum(d['show'] and bool(d['hidden_parts']) for d in decisions)} 帧仅显示部分身体，共 {len(decisions)} 帧。隐藏不表示动作错误，未隐藏也不证明识别准确。")
     st.caption('躯干定位不足、多人或位置突变时全部隐藏；否则分别检查左右手臂和腿，缺一处不再让其他部位一起消失。这是待验证规则，不能认人，也不能排除背景人物或器械误检。')
@@ -225,7 +225,7 @@ def render_pose_panel(video,start,end,mirror):
     render_side_legend()
     try:
         read_preview_frame(video,start,correct_mirror=mirror)
-        render_synced_player(video,mirror,cached)
+        render_synced_player(video,mirror,cached,decisions=decisions)
     except ValueError as exc:
         st.warning(str(exc))
     except (MediaInputError,OSError):

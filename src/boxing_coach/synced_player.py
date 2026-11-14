@@ -18,7 +18,7 @@ _player = components.component(
 )
 
 
-def player_payload(video: PreviewVideo, correct_mirror: bool, pose_run=None) -> bytes:
+def player_payload(video: PreviewVideo, correct_mirror: bool, pose_run=None, *, decisions=None) -> bytes:
     if len(video.content) > MAX_SYNC_BYTES:
         raise ValueError('联动播放暂限 64 MiB；较大文件请切换“手动逐帧”。')
     # Raw binary transport: one mirror flag byte, then the immutable MP4 snapshot.
@@ -33,8 +33,9 @@ def player_payload(video: PreviewVideo, correct_mirror: bool, pose_run=None) -> 
         raise ValueError('此视频的起始时间偏移尚未验证骨架联动，请使用逐帧核对。')
     frames = []
     from .quality import assess_frames, reason_text, display_frame, VERSION
-    decisions = assess_frames(pose_run)
-    for frame, diagnostic, decision in zip(pose_run.frames, pose_run.diagnostics, decisions):
+    if decisions is None:
+        decisions = assess_frames(pose_run)
+    for frame, diagnostic, decision in zip(pose_run.frames, pose_run.diagnostics, decisions, strict=True):
         points = {str(p['index']): [p['image']['x'], p['image']['y']]
                   for p in display_frame(frame,decision)['landmarks'] if drawable(p)}
         frames.append({'time': frame['timestamp_ms']/1000,
@@ -48,6 +49,6 @@ def player_payload(video: PreviewVideo, correct_mirror: bool, pose_run=None) -> 
     return bytes([2 + int(correct_mirror)]) + struct.pack('<I',len(metadata)) + metadata + video.content
 
 
-def render_synced_player(video: PreviewVideo, correct_mirror: bool, pose_run=None) -> None:
-    _player(data=player_payload(video, correct_mirror, pose_run),
+def render_synced_player(video: PreviewVideo, correct_mirror: bool, pose_run=None, *, decisions=None) -> None:
+    _player(data=player_payload(video, correct_mirror, pose_run, decisions=decisions),
             key='pose_player' if pose_run is not None else 'synced_player', height='content')

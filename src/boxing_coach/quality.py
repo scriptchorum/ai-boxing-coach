@@ -23,7 +23,7 @@ def assess_frames(run, *, tracker: SubjectTracker | bool | None = None):
 
     Compare adjacent reliable torso estimates, including rejected jump frames;
     this detects transitions, not identity, and does not lock onto a subject.
-    When a SubjectTracker is active (or diagnostics record tracker_reason),
+    When a SubjectTracker is active,
     long-horizon recovery jump rejections map to 'position_jump' without
     overwriting the last reliable torso reference.
     """
@@ -36,7 +36,7 @@ def assess_frames(run, *, tracker: SubjectTracker | bool | None = None):
         reasons=[]
         allowed=[]
         hidden_parts=[]
-        tracker_reason = diagnostic.get('tracker_reason')
+        tracker_reason = diagnostic.get('tracker_reason') if active_tracker is not None else None
         if tracker_reason is None and active_tracker is not None:
             candidates = [frame['landmarks']] if diagnostic['status'] == 'single_model_pose' else []
             _, tracker_reason = active_tracker.select_best_candidate(candidates, frame['timestamp_ms'])

@@ -67,6 +67,22 @@ class QualityTests(unittest.TestCase):
         f['landmarks'][23]['visibility']=.1
         self.assertFalse(assess_frames(run([f]))[0]['show'])
 
+    def test_same_cached_run_switches_static_and_playback_together(self):
+        import json,struct
+        from test_pose import PoseTests,fixture_run
+        from boxing_coach.synced_player import player_payload
+        case=PoseTests(); case.setUp()
+        self.addCleanup(case.doCleanups)
+        result=fixture_run(case.video)
+        result.diagnostics[0]['tracker_reason']='impostor_jump_rejected'
+        for enabled in (False,True,False):
+            decisions=assess_frames(result,tracker=enabled)
+            payload=player_payload(case.video,False,result,decisions=decisions)
+            size=struct.unpack('<I',payload[1:5])[0]
+            frame_data=json.loads(payload[5:5+size])['frames'][0]
+            self.assertEqual(bool(frame_data['points']),not enabled)
+            self.assertEqual(bool(frame_data['points']),decisions[0]['show'])
+
     def test_tracker_blocks_cross_gap_impostor_jump_without_updating_reference(self):
         frames=[frame(0,.5),frame(33,.5),frame(400,.1),frame(433,.1),frame(500,.51)]
         r=run(frames,['single_model_pose','multiple_poses','single_model_pose','single_model_pose','single_model_pose'])
@@ -85,7 +101,9 @@ class QualityTests(unittest.TestCase):
 
         r.diagnostics[2]['tracker_reason']='impostor_jump_rejected'
         r.diagnostics[3]['tracker_reason']='impostor_jump_rejected'
-        from_diag=assess_frames(r)
+        self.assertEqual(assess_frames(r,tracker=False),baseline)
+        self.assertEqual(assess_frames(r),baseline)
+        from_diag=assess_frames(r,tracker=True)
         self.assertFalse(from_diag[2]['show'])
         self.assertIn('position_jump',from_diag[2]['reasons'])
         self.assertFalse(from_diag[3]['show'])
