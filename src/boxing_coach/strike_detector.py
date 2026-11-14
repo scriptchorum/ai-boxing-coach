@@ -8,14 +8,26 @@ and evaluates the boxer's defensive posture and power generation:
 """
 from __future__ import annotations
 
-import math
-from typing import Any, Sequence
+from typing import TYPE_CHECKING, Any, Iterable, Sequence
 
 from .muaythai_metrics import (
+    LEFT_ELBOW,
+    LEFT_HIP,
+    LEFT_SHOULDER,
+    LEFT_WRIST,
+    RIGHT_ELBOW,
+    RIGHT_HIP,
+    RIGHT_SHOULDER,
+    RIGHT_WRIST,
     check_rear_guard,
     compute_arm_extension_ratio,
     compute_hip_rotation_angle,
 )
+from .quality_gate import clip_quality_report, metric_quality_gate
+
+if TYPE_CHECKING:
+    from .pose import PoseRun
+    from .subject_tracker import SubjectTracker
 
 
 class StrikeAuditor:
@@ -135,3 +147,151 @@ class StrikeAuditor:
                 })
 
         return peaks
+
+    @staticmethod
+    def required_indices_for_stance(stance: str) -> dict[str, tuple[int, ...]]:
+        """Return required MediaPipe landmark indices for gated strike metrics."""
+        normalized = stance.lower()
+        if normalized == 'orthodox':
+            return {
+                'lead_straight': (LEFT_SHOULDER, LEFT_ELBOW, LEFT_WRIST),
+                'rear_straight': (RIGHT_SHOULDER, RIGHT_ELBOW, RIGHT_WRIST),
+                'rear_guard': (LEFT_SHOULDER, RIGHT_SHOULDER, RIGHT_WRIST),
+                'hip_rotation': (LEFT_HIP, RIGHT_HIP),
+            }
+        if normalized == 'southpaw':
+            return {
+                'lead_straight': (RIGHT_SHOULDER, RIGHT_ELBOW, RIGHT_WRIST),
+                'rear_straight': (LEFT_SHOULDER, LEFT_ELBOW, LEFT_WRIST),
+                'rear_guard': (LEFT_SHOULDER, RIGHT_SHOULDER, LEFT_WRIST),
+                'hip_rotation': (LEFT_HIP, RIGHT_HIP),
+            }
+        raise ValueError(f'Unsupported stance: {stance}')
+
+    def audit_pose_run(
+        self,
+        run: PoseRun,
+        *,
+        single_person_confirmed: bool = False,
+        declared_reasons: Iterable[str] = (),
+        tracker: SubjectTracker | bool | None = None,
+    ) -> dict[str, Any]:
+        """Gate strike events and 2D metrics with analysis-quality rules."""
+        declared = list(declared_reasons)
+        clip_report = clip_quality_report(run, declared_reasons=declared, tracker=tracker)
+        raw_analysis = self.analyze_timeline(run.frames)
+        indices_map = self.required_indices_for_stance(self.stance)
+
+        gated_strikes: list[dict[str, Any]] = []
+        for strike in raw_analysis['strikes']:
+            frame_index = strike['frame_index']
+            strike_type = strike['strike_type']
+            ext_metric_id = (
+                'lead_extension_ratio' if strike_type == 'lead_straight' else 'rear_extension_ratio'
+            )
+            event_frames = {'strike_peak': frame_index}
+
+            ext_gate = metric_quality_gate(
+                run,
+                ext_metric_id,
+                indices_map[strike_type],
+                event_frames,
+                single_person_confirmed=single_person_confirmed,
+                declared_reasons=declared,
+                tracker=tracker,
+            )
+            guard_gate = metric_quality_gate(
+                run,
+                'rear_guard_drop_distance',
+                indices_map['rear_guard'],
+                event_frames,
+                single_person_confirmed=single_person_confirmed,
+                declared_reasons=declared,
+                tracker=tracker,
+            )
+            hip_gate = metric_quality_gate(
+                run,
+                'hip_rotation_deg',
+                indices_map['hip_rotation'],
+                event_frames,
+                single_person_confirmed=single_person_confirmed,
+                declared_reasons=declared,
+                tracker=tracker,
+            )
+
+            ext_eligible = ext_gate['status'] == 'eligible' and ext_gate['value_policy'] == 'compute_later'
+            guard_eligible = guard_gate['status'] == 'eligible' and guard_gate['value_policy'] == 'compute_later'
+            hip_eligible = hip_gate['status'] == 'eligible' and hip_gate['value_policy'] == 'compute_later'
+
+            gated_strikes.append({
+                'strike_type': strike_type,
+                'frame_index': frame_index,
+                'timestamp_ms': strike['timestamp_ms'],
+                'status': ext_gate['status'],
+                'extension_ratio': strike['extension_ratio'] if ext_eligible else None,
+                'rear_guard_safe': strike['rear_guard_safe'] if guard_eligible else None,
+                'rear_guard_dropped': strike['rear_guard_dropped'] if guard_eligible else None,
+                'rear_guard_drop_distance': strike['rear_guard_drop_distance'] if guard_eligible else None,
+                'hip_rotation_deg': strike['hip_rotation_deg'] if hip_eligible else None,
+                'gates': {
+                    'extension': ext_gate,
+                    'rear_guard': guard_gate,
+                    'hip_rotation': hip_gate,
+                },
+            })
+
+        eligible_events = [item for item in gated_strikes if item['status'] == 'eligible']
+        lead_strikes = sum(1 for item in eligible_events if item['strike_type'] == 'lead_straight')
+        rear_strikes = sum(1 for item in eligible_events if item['strike_type'] == 'rear_straight')
+
+        eligible_guard_events = [
+            item for item in eligible_events if item['rear_guard_dropped'] is not None
+        ]
+        if eligible_guard_events:
+            guard_drops: int | None = sum(
+                1 for item in eligible_guard_events if item['rear_guard_dropped']
+            )
+            guard_drop_rate: float | None = round(guard_drops / len(eligible_guard_events), 3)
+        else:
+            guard_drops = None
+            guard_drop_rate = None
+
+        observed_hip_angles = [
+            item['hip_rotation_deg'] for item in eligible_events if item['hip_rotation_deg'] is not None
+        ]
+        avg_hip_rotation_deg: float | None = (
+            round(sum(observed_hip_angles) / len(observed_hip_angles), 2)
+            if observed_hip_angles
+            else None
+        )
+
+        observations: list[str] = []
+        if eligible_events:
+            observations.append(
+                f'已通过门禁的局部伸展峰值共 {len(eligible_events)} 次'
+                f'（前手直拳 {lead_strikes} 次，后手直拳 {rear_strikes} 次；二维归一化画面测量）。'
+            )
+            if guard_drops is not None and guard_drop_rate is not None:
+                observations.append(
+                    f'在通过护头关键点门禁的 {len(eligible_guard_events)} 次峰值帧中，'
+                    f'后手腕低于下巴基准线容差出现 {guard_drops} 次（{guard_drop_rate * 100:.1f}%）。'
+                )
+            if avg_hip_rotation_deg is not None:
+                observations.append(
+                    f'在通过双髋关键点门禁的 {len(observed_hip_angles)} 次峰值帧中，'
+                    f'二维双髋连线角度均值为 {avg_hip_rotation_deg:.2f}°（受机位视角影响，仅作当前画面描述）。'
+                )
+
+        return {
+            'clip_report': clip_report,
+            'single_person_confirmed': single_person_confirmed,
+            'candidate_strike_count': raw_analysis['total_strikes'],
+            'eligible_strike_count': len(eligible_events),
+            'lead_strikes': lead_strikes,
+            'rear_strikes': rear_strikes,
+            'guard_drops': guard_drops,
+            'guard_drop_rate': guard_drop_rate,
+            'avg_hip_rotation_deg': avg_hip_rotation_deg,
+            'strikes': gated_strikes,
+            'observations': observations,
+        }

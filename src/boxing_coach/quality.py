@@ -1,6 +1,7 @@
 """Experimental display rejection rules; never a subject or action classifier."""
 from math import hypot
 from .pose import JOINTS, drawable
+from .subject_tracker import SubjectTracker, resolve_tracker
 
 VERSION = 'display-quality-0.2'
 TORSO = (11,12,23,24)
@@ -17,12 +18,16 @@ LABELS = {
     'torso_missing': '躯干关键点不足，无法可靠定位',
 }
 
-def assess_frames(run):
+def assess_frames(run, *, tracker: SubjectTracker | bool | None = None):
     """Return reasons per source frame without editing raw model evidence.
 
     Compare adjacent reliable torso estimates, including rejected jump frames;
     this detects transitions, not identity, and does not lock onto a subject.
+    When a SubjectTracker is active (or diagnostics record tracker_reason),
+    long-horizon recovery jump rejections map to 'position_jump' without
+    overwriting the last reliable torso reference.
     """
+    active_tracker = resolve_tracker(tracker)
     results=[]
     previous=None
     config=getattr(run,'config',None)
@@ -31,8 +36,14 @@ def assess_frames(run):
         reasons=[]
         allowed=[]
         hidden_parts=[]
+        tracker_reason = diagnostic.get('tracker_reason')
+        if tracker_reason is None and active_tracker is not None:
+            candidates = [frame['landmarks']] if diagnostic['status'] == 'single_model_pose' else []
+            _, tracker_reason = active_tracker.select_best_candidate(candidates, frame['timestamp_ms'])
         if diagnostic['status'] != 'single_model_pose':
             reasons.append(diagnostic['status'])
+            if tracker_reason == 'impostor_jump_rejected' and 'position_jump' not in reasons:
+                reasons.append('position_jump')
             previous=None
         else:
             points={p['index']:p for p in frame['landmarks']}
@@ -62,7 +73,11 @@ def assess_frames(run):
                         reasons.append('position_jump')
             else:
                 reasons.append('torso_missing')
-            previous=current
+            if tracker_reason == 'impostor_jump_rejected':
+                if 'position_jump' not in reasons:
+                    reasons.append('position_jump')
+            else:
+                previous=current
         block = any(code not in ('missing_points','out_of_frame') for code in reasons)
         if block: allowed=[]
         results.append({'show':bool(allowed),'reasons':reasons,'allowed_indices':allowed,

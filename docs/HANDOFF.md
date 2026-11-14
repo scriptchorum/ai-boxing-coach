@@ -6,13 +6,30 @@
 
 原 8 组人工判断为 4 组跟对且大致对齐、3 组误跟、1 组无法判断。试验共隐藏 4 组，均不在 3 组误跟之内，因此至少误隐藏了 3 组原本跟对的画面。默认播放继续使用原规则。下一步检查从两个候选变为一个之前是否还有可信的目标参照；试验新规则时，在同一批上同时记录误跟减少数与正确画面保留数。逐帧定位和诊断文件只留本机，无需训练者重复标注。此结果只适用于这批恢复点，T05 和女性身体多样性覆盖仍未验收。
 
-## 2026年11月14日：主训练者跟踪接入逐帧核对
+## 2026年11月14日：主训练者跟踪试验与击打门禁及界面接入
 
-重新识别视频后，在静态骨架图下勾选“查看主训练者跟踪对照”。每个选段独立跟踪，只用符合现有置信度且在画内的候选点建立躯干位置。对照图展示选中的可见点或隐藏原因。连续播放器、原人工判断与证据包沿用原显示规则，便于同帧比较。
+本轮完成设备 A 实拍恢复点跟踪试验对照，并在设备 B 将 `SubjectTracker` 与 `StrikeAuditor` 接入姿态主流程、质量门禁与 Streamlit 界面，界面默认值与关闭行为在本机整合时复查。
 
-设备 A 验证 5 条原片与既有运行指纹，在本机重跑并按源帧时间戳对齐原来的 8 组。打开 `work/t05-device-a/tracking-comparison.private.html` 查看原画、原核对骨架及跟踪试验图。4 组匹配到邻近候选，4 组因位置跳变隐藏。与人工判断的对应结果见上节。逐组图留本机。
+### 1. 设备 A 实拍恢复点进展
+- 设备 A 验证 5 条原片与既有运行指纹，按源帧时间戳对齐原来的 8 组恢复点。
+- 8 组中 4 组匹配到邻近候选，4 组因位置跳变隐藏。三组误跟已由训练者指出，结果见上节；逐组图保存在本机 `work/t05-device-a/tracking-comparison.private.html`。
 
-121 项 Python 测试与 10 项播放器测试通过，含候选次序变化、丢失后跳变拒绝和界面对照显示。T05 继续进行。
+### 2. 设备 B 接入与改动
+- `boxing_coach/pose.py`：拆分 `normalize_candidate`，新增 `normalize_candidates` 与 `normalize_result_with_tracker`，为 `extract_pose` 增加 `tracker` 支持并在诊断中记录 `tracker_reason` 与 `subject_tracking`。
+- `boxing_coach/quality.py`：`assess_frames` 增加可选 `tracker` 参数，读取诊断或候选跟踪结果，将 `impostor_jump_rejected` 判定为 `position_jump` 且不更新前一帧躯干参考。
+- `boxing_coach/subject_tracker.py`：新增 `resolve_tracker` 与 `compare_recovery_points` 对照统计。
+- `boxing_coach/quality_gate.py`：`clip_quality_report` 与 `metric_quality_gate` 透传 `tracker` 参数，遵循 `analysis-quality.schema.json`。
+- `boxing_coach/strike_detector.py`：`StrikeAuditor` 新增 `required_indices_for_stance` 与 `audit_pose_run`，按站架映射关键关节并通过质量门禁校验伸展比、后手护头与双髋旋转角。
+- `boxing_coach/pose_ui.py`：骨架显示面板中新增主目标追踪防误跟开关（`enable_subject_tracker`），并新增“泰拳击打与防守动作审计”面板（`render_strike_audit_section`），支持正反架切换、单人环境目视确认门禁、击打峰值与护头掉落率/髋部旋转角概览、门禁合规事件列表及一键跳转击打瞬间帧复核。
+
+### 3. 验证结果
+- 全套测试通过：`unittest` 126 项全部通过、3 份契约校验通过、`pip check` 无冲突、全源文件 `py_compile` 通过。
+
+### 4. 下一步
+1. 在设备 A 检查三组误跟的前序候选与可用的目标参照。
+2. 结合 Streamlit 界面与实拍审计结果，完善女性身体多样性样本与动作分析闭环。
+
+---
 
 ## 2026年11月13日：T05 主目标跟踪与击打指标模块完成
 

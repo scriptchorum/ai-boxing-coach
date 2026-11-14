@@ -94,12 +94,12 @@ def _interpolation(run: PoseRun) -> dict:
     }
 
 
-def clip_quality_report(run: PoseRun, *, declared_reasons: Iterable[str] = ()) -> dict:
+def clip_quality_report(run: PoseRun, *, declared_reasons: Iterable[str] = (), tracker=None) -> dict:
     """Return privacy-safe, clip-level engineering diagnostics for one pose run."""
     batch=_validated_run(run)
     declared=_declared_reasons(declared_reasons)
     try:
-        decisions=assess_frames(run)
+        decisions=assess_frames(run,tracker=tracker)
     except (IndexError,KeyError,TypeError,ValueError) as exc:
         raise QualityGateError('姿态帧无法按固定显示规则诊断。') from exc
     counts={code:0 for code in FRAME_REASON_CODES}
@@ -190,7 +190,7 @@ def _point_reasons(point: dict | None, config: dict) -> set[str]:
 
 def metric_quality_gate(run: PoseRun, metric_id: str, required_indices: Iterable[int],
                         event_frames: dict, *, single_person_confirmed: bool = False,
-                        declared_reasons: Iterable[str] = ()) -> dict:
+                        declared_reasons: Iterable[str] = (), tracker=None) -> dict:
     """Gate a future metric without calculating or inventing the metric value."""
     _validated_run(run)
     metric=_metric_id(metric_id)
@@ -200,7 +200,7 @@ def metric_quality_gate(run: PoseRun, metric_id: str, required_indices: Iterable
     if not isinstance(single_person_confirmed,bool):
         raise QualityGateError('单人确认必须是显式布尔值。')
     try:
-        decisions=assess_frames(run)
+        decisions=assess_frames(run,tracker=tracker)
     except (IndexError,KeyError,TypeError,ValueError) as exc:
         raise QualityGateError('姿态帧无法按固定显示规则诊断。') from exc
     by_index={frame['source_frame_index']:(frame,diagnostic,decision)

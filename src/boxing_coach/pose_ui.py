@@ -9,6 +9,8 @@ from .synced_player import render_synced_player
 from .quality import assess_frames, reason_text, display_frame, VERSION, LABELS
 from .review import FILTERS, REACQUIRED, VERDICTS, recovery_references, review_indices, neighbors, summarize_reviews, export_reviews, import_reviews, read_review_file, MAX_REVIEW_BYTES
 from .evidence import EvidenceError, MAX_DEMO_FRAMES, build_demo_report, build_evidence_bundle
+from .strike_detector import StrikeAuditor
+from .subject_tracker import SubjectTracker
 
 
 def clear_pose():
@@ -129,6 +131,53 @@ def render_review_files(cached,uploaded):
         render_review_download(cached,key='review_download')
 
 
+def render_strike_audit_section(cached, tracker_enabled):
+    with st.expander('泰拳击打与防守动作审计 (实验性门禁评估)', expanded=False):
+        st.caption('基于姿态关键点在时间线上的伸展峰值审计直拳动作，并根据质量门禁（单人确认、关键点可见度）输出客观观察结果。')
+        c1, c2 = st.columns(2)
+        stance_label = c1.selectbox('站架选择', ['正架 (右手后手 / Orthodox)', '反架 (左手后手 / Southpaw)'], key='audit_stance_select')
+        stance = 'orthodox' if 'Orthodox' in stance_label else 'southpaw'
+        single_person = c2.checkbox('目视确认：训练区域无背景人物干扰 (解锁合规指标计算)', value=True, key='audit_single_person_confirmed')
+
+        auditor = StrikeAuditor(stance=stance)
+        audit_res = auditor.audit_pose_run(cached, single_person_confirmed=single_person, tracker=tracker_enabled)
+
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric('检测到局部伸展峰值', f"{audit_res['candidate_strike_count']} 次")
+        m2.metric('门禁合规击打', f"{audit_res['eligible_strike_count']} 次")
+        m3.metric('前手 / 后手直拳', f"{audit_res['lead_strikes']} / {audit_res['rear_strikes']}")
+        guard_rate = audit_res.get('guard_drop_rate')
+        m4.metric('后手护头掉落率', f"{guard_rate * 100:.1f}%" if guard_rate is not None else "待门禁校验")
+
+        st.markdown('**观察结论与技术反馈：**')
+        if audit_res.get('observations'):
+            for obs in audit_res['observations']:
+                st.info(obs)
+        else:
+            st.caption('当前所选区间内未检测到符合门禁条件的有效击打或指标数据。')
+
+        gated_strikes = audit_res.get('strikes', [])
+        if gated_strikes:
+            st.markdown('**击打事件列表（点击可跳转至击打定格帧）：**')
+            strike_rows = []
+            for s in gated_strikes:
+                st_type_name = '前手直拳 (Jab)' if s['strike_type'] == 'lead_straight' else '后手直拳 (Cross)'
+                strike_rows.append({
+                    '源帧号': s['frame_index'],
+                    '时间 (秒)': f"{s['timestamp_ms'] / 1000:.3f}",
+                    '动作类型': st_type_name,
+                    '门禁状态': s['status'],
+                    '伸展比率': f"{s['extension_ratio']:.2f}" if s.get('extension_ratio') is not None else "-",
+                    '后手护头状态': '掉落/过低' if s.get('rear_guard_dropped') else ('保持' if s.get('rear_guard_safe') else '-'),
+                    '双髋旋转角': f"{s.get('hip_rotation_deg', 0):.1f}°" if s.get('hip_rotation_deg') is not None else "-",
+                })
+            st.dataframe(strike_rows, hide_index=True)
+
+            strike_indices = [s['frame_index'] for s in gated_strikes]
+            sel_strike_frame = st.selectbox('选择要复核的击打瞬间帧', strike_indices, format_func=lambda i: f"源帧 {i}", key='sel_strike_frame_jump')
+            st.button('跳转至该击打峰值帧', key='jump_strike_frame_btn', on_click=go_review, args=(sel_strike_frame,))
+
+
 def render_pose_panel(video,start,end,mirror):
     st.subheader('播放并查看骨架',anchor='pose-playback')
     st.write('先点击下方“识别所选区间的人体关键点”，完成后播放器会出现在这里。刷新或换片后需要重新识别。')
@@ -165,7 +214,8 @@ def render_pose_panel(video,start,end,mirror):
         return
     st.button('清除本次关键点结果',on_click=clear_pose)
     render_review_files(cached,uploaded)
-    decisions = assess_frames(cached)
+    enable_tracker = st.checkbox('启用主目标持续追踪与防跳变过滤 (SubjectTracker)', value=True, key='enable_subject_tracker')
+    decisions = assess_frames(cached, tracker=enable_tracker)
     st.info(f"分部位显示：{sum(not d['show'] for d in decisions)} 帧全部隐藏，{sum(d['show'] and bool(d['hidden_parts']) for d in decisions)} 帧仅显示部分身体，共 {len(decisions)} 帧。隐藏不表示动作错误，未隐藏也不证明识别准确。")
     st.caption('躯干定位不足、多人或位置突变时全部隐藏；否则分别检查左右手臂和腿，缺一处不再让其他部位一起消失。这是待验证规则，不能认人，也不能排除背景人物或器械误检。')
     with st.expander('查看隐藏原因统计'):
@@ -189,6 +239,7 @@ def render_pose_panel(video,start,end,mirror):
     st.warning('骨架是未经核实的模型估计：遮挡、出框或拿取手机时，即使置信信号较高，也可能连到背景人物或器械上。请先选择稳定、单人全身可见的区间；本版尚不能自动排除这些错误。')
     st.dataframe([{'关键点':name,'未满足绘制条件的帧数':count,'总帧数':summary['frames']}
                   for name,count in summary['unavailable_joint_frames'].items()],hide_index=True)
+    render_strike_audit_section(cached, enable_tracker)
     st.subheader('快速人工核对')
     reviews=st.session_state.setdefault('pose_reviews',{})
     wrong_target,misaligned=VERDICTS[2:4]

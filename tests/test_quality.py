@@ -66,3 +66,26 @@ class QualityTests(unittest.TestCase):
         self.assertEqual(f,before)
         f['landmarks'][23]['visibility']=.1
         self.assertFalse(assess_frames(run([f]))[0]['show'])
+
+    def test_tracker_blocks_cross_gap_impostor_jump_without_updating_reference(self):
+        frames=[frame(0,.5),frame(33,.5),frame(400,.1),frame(433,.1),frame(500,.51)]
+        r=run(frames,['single_model_pose','multiple_poses','single_model_pose','single_model_pose','single_model_pose'])
+        baseline=assess_frames(r)
+        self.assertTrue(baseline[2]['show'])
+
+        tracked=assess_frames(r,tracker=True)
+        self.assertTrue(tracked[0]['show'])
+        self.assertFalse(tracked[1]['show'])
+        self.assertFalse(tracked[2]['show'])
+        self.assertIn('position_jump',tracked[2]['reasons'])
+        self.assertEqual(tracked[2]['allowed_indices'],[])
+        self.assertFalse(tracked[3]['show'])
+        self.assertIn('position_jump',tracked[3]['reasons'])
+        self.assertTrue(tracked[4]['show'])
+
+        r.diagnostics[2]['tracker_reason']='impostor_jump_rejected'
+        r.diagnostics[3]['tracker_reason']='impostor_jump_rejected'
+        from_diag=assess_frames(r)
+        self.assertFalse(from_diag[2]['show'])
+        self.assertIn('position_jump',from_diag[2]['reasons'])
+        self.assertFalse(from_diag[3]['show'])
