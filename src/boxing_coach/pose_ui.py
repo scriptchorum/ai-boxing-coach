@@ -17,6 +17,7 @@ from .local_storage import (
     save_persistent_history,
 )
 from .muaythai_metrics import analyze_muaythai_arsenal
+from .scorecard_report import batch_review_video_files, build_standalone_scorecard_html
 from .rear_straight_review import (
     analyze_jab_and_one_two,
     apply_action_override,
@@ -40,6 +41,7 @@ def clear_pose():
     st.session_state.pop('pose_strike_audit',None)
     st.session_state.pop('pose_rear_straight_overrides',None)
     st.session_state.pop('pose_review_annotation',None)
+    st.session_state.pop('pose_scorecard_html',None)
     st.session_state.pop('pose_demo_frames',None)
     st.session_state.pop('pose_demo_report',None)
 
@@ -320,11 +322,12 @@ def render_rear_straight_review_section(video, cached, mirror):
             sample_id=f'run-{cached.start}-{cached.end}',
             single_person_confirmed=single_ok,
         )
-        st.markdown('**🥊 前手刺拳 (Jab) 与 1-2 连击协同复盘（B02）：**')
-        j1, j2, j3 = st.columns(3)
+        st.markdown('**🥊 全拳法协同复盘：刺拳 (Jab)、平勾 (Hook)、上勾 (Uppercut) 与 1-2 / 1-2-3 连击（B02）：**')
+        j1, j2, j3, j4 = st.columns(4)
         j1.metric('前手刺拳 (Jab)', f"{combo_res['jab_attempt_count']} 次（完整回手 {combo_res['jab_valid_count']} 次）")
         j2.metric('前手刺拳回防评分', combo_res['jab_defense_grade'])
-        j3.metric('1-2 连击组合 (Jab→Cross)', f"{combo_res['combo_count']} 组")
+        j3.metric('平勾拳 / 上勾拳', f"{combo_res.get('hook_count', 0)} 勾 / {combo_res.get('uppercut_count', 0)} 上勾")
+        j4.metric('1-2 / 1-2-3 连击', f"{combo_res['combo_count']} 组 / {combo_res.get('one_two_three_count', 0)} 组")
         st.caption(combo_res['combo_feedback'])
         if combo_res['one_two_combos']:
             st.dataframe(
@@ -339,6 +342,22 @@ def render_rear_straight_review_section(video, cached, mirror):
                         '双拳完整回防': '是' if c['both_returned'] else '否',
                     }
                     for c in combo_res['one_two_combos']
+                ],
+                hide_index=True,
+            )
+        if combo_res.get('one_two_three_combos'):
+            st.dataframe(
+                [
+                    {
+                        '三连击编号': c3['combo_id'],
+                        '组合类型': c3['combo_name'],
+                        '刺拳峰值帧': c3['jab_frame_index'],
+                        '后手峰值帧': c3['rear_frame_index'],
+                        '第3拳峰值帧': c3['third_punch_frame_index'],
+                        '2→3 衔接间隔 (ms)': f"{c3['two_to_three_ms']:.1f}",
+                        '全套回防': '是' if c3['all_returned'] else '否',
+                    }
+                    for c3 in combo_res['one_two_three_combos']
                 ],
                 hide_index=True,
             )
@@ -422,14 +441,40 @@ def render_rear_straight_review_section(video, cached, mirror):
             st.caption('当前区间未检出后手直拳候选动作。')
 
         ann_key = (cached.key, stance, tuple(sorted(overrides.keys())))
-        if st.button('准备事件标注与分段 JSON（T08/T09）', key='review_annotation_prepare'):
+        e_col1, e_col2 = st.columns(2)
+        if e_col1.button('准备完整图文复盘评分报告（离线 HTML）', key='scorecard_html_prepare'):
+            vid_name = getattr(getattr(video, 'path', None), 'name', None)
+            clip_label = f'{vid_name} (源帧 {cached.start}–{cached.end})' if vid_name else f'源帧 {cached.start}–{cached.end}'
+            st.session_state.pose_scorecard_html = {
+                'key': ann_key,
+                'html': build_standalone_scorecard_html(
+                    clip_label=clip_label,
+                    stance=stance,
+                    view=view,
+                    rear_metrics=metrics,
+                    combo_res=combo_res,
+                    mt_res=mt_res,
+                ),
+            }
+        saved_sc = st.session_state.get('pose_scorecard_html')
+        if saved_sc and saved_sc.get('key') == ann_key:
+            e_col1.download_button(
+                '下载完整图文复盘评分报告（离线 HTML）',
+                data=saved_sc['html'],
+                file_name='boxing-training-scorecard.html',
+                mime='text/html',
+                key='scorecard_html_download',
+                on_click='ignore',
+            )
+
+        if e_col2.button('准备事件标注与分段 JSON（T08/T09）', key='review_annotation_prepare'):
             st.session_state.pose_review_annotation = {
                 'key': ann_key,
                 'json': export_review_annotation_json(seg),
             }
         saved_ann = st.session_state.get('pose_review_annotation')
         if saved_ann and saved_ann.get('key') == ann_key:
-            st.download_button(
+            e_col2.download_button(
                 '下载事件标注与分段 JSON',
                 data=saved_ann['json'],
                 file_name='boxing-rear-straight-annotation.json',
@@ -441,7 +486,8 @@ def render_rear_straight_review_section(video, cached, mirror):
         if 'pose_local_history' not in st.session_state:
             st.session_state.pose_local_history = load_persistent_history()
         history = st.session_state.pose_local_history
-        if st.button('将本次统计加入本地同条件历史对比（T11）', key='rs_save_history_btn'):
+        h_col1, h_col2 = st.columns(2)
+        if h_col1.button('将本次统计加入本地同条件历史对比（T11）', key='rs_save_history_btn'):
             vid_name = getattr(getattr(video, 'path', None), 'name', None)
             label_str = f'{vid_name} (源帧 {cached.start}–{cached.end})' if vid_name else f'源帧 {cached.start}–{cached.end}'
             entry = build_history_entry(
@@ -458,6 +504,43 @@ def render_rear_straight_review_section(video, cached, mirror):
                 save_persistent_history(history)
             except OSError:
                 pass
+
+        vid_path_obj = getattr(video, 'path', None)
+        sibling_mp4s = []
+        if vid_path_obj is not None and getattr(vid_path_obj, 'parent', None) is not None and vid_path_obj.parent.is_dir():
+            sibling_mp4s = sorted(vid_path_obj.parent.glob('*.mp4'))
+        if len(sibling_mp4s) > 1:
+            if h_col2.button(
+                f'📚 一键批量复盘同目录全部 MP4（共 {len(sibling_mp4s)} 个视频）',
+                key='batch_folder_review_btn',
+            ):
+                b_bar = st.progress(0, text='正在批量复盘同目录 MP4 视频…')
+                batch_res = batch_review_video_files(
+                    sibling_mp4s,
+                    stance=stance,
+                    view=view,
+                    mirror=bool(mirror),
+                    progress_callback=lambda done, tot, name: b_bar.progress(
+                        done / max(tot, 1), text=f'批量复盘进度 {done}/{tot}：{name}'
+                    ),
+                )
+                st.session_state.pose_batch_table = batch_res['rows']
+                existing_labels = {h.get('label') for h in history}
+                for he in batch_res['history_entries']:
+                    if he.get('label') not in existing_labels:
+                        he['entry_id'] = f'hist-{len(history) + 1}'
+                        history.append(he)
+                        existing_labels.add(he.get('label'))
+                st.session_state.pose_local_history = history
+                try:
+                    save_persistent_history(history)
+                except OSError:
+                    pass
+
+        batch_rows = st.session_state.get('pose_batch_table')
+        if batch_rows:
+            st.markdown('**📊 同文件夹多视频横向复盘对比总表：**')
+            st.dataframe(batch_rows, hide_index=True)
 
         if history:
             comp = compare_same_condition_history(
@@ -496,6 +579,8 @@ def render_local_storage_section(video):
             st.session_state.pop('pose_evidence_bundle', None)
             st.session_state.pop('pose_strike_audit', None)
             st.session_state.pop('pose_review_annotation', None)
+            st.session_state.pop('pose_scorecard_html', None)
+            st.session_state.pop('pose_batch_table', None)
             st.session_state.pop('pose_demo_frames', None)
             st.session_state.pop('pose_demo_report', None)
             st.session_state.pop('pose_local_history', None)

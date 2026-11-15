@@ -252,6 +252,9 @@ def segment_rear_straights(
                 "timestamp_ms": ts_ms,
                 "scale_px": scale_px,
                 "hip_mid_px": hip_mid,
+                "sh_xy": sh_xy,
+                "el_xy": el_xy,
+                "wr_xy": wr_xy,
                 "offset_xy": offset_xy,
                 "reach_px": reach_px,
                 "ext_ratio": ext_ratio,
@@ -1134,6 +1137,90 @@ def compare_same_condition_history(
     }
 
 
+def _detect_bent_arm_punches(
+    seg_dict: dict[str, Any],
+    *,
+    hand_label: str,
+    straight_frames: set[int],
+) -> list[dict[str, Any]]:
+    """Detect Hook (平勾拳) and Uppercut (上勾拳) from flexed-elbow arm kinematics."""
+    feats = seg_dict.get("frame_features", [])
+    scale_px = seg_dict.get("metric_config", {}).get("scale_px")
+    if not feats or scale_px is None or scale_px <= 1e-3:
+        return []
+
+    detected: list[dict[str, Any]] = []
+    last_pos = -5
+    n = len(feats)
+    for i in range(1, n - 1):
+        f = feats[i]
+        src_idx = int(f["source_frame_index"])
+        if any(abs(src_idx - sf) <= 3 for sf in straight_frames):
+            continue
+        if i - last_pos < 4 or not f.get("critical_ok"):
+            continue
+        sh_xy = f.get("sh_xy")
+        el_xy = f.get("el_xy")
+        wr_xy = f.get("wr_xy")
+        reach_px = f.get("reach_px")
+        ext_ratio = f.get("ext_ratio")
+        elbow_ang = f.get("elbow_angle_deg")
+        if (
+            sh_xy is None
+            or el_xy is None
+            or wr_xy is None
+            or reach_px is None
+            or ext_ratio is None
+            or elbow_ang is None
+        ):
+            continue
+
+        arm_reach_px = math.hypot(wr_xy[0] - sh_xy[0], wr_xy[1] - sh_xy[1])
+        guard_disp_px = float(f.get("guard_dist_px") or arm_reach_px)
+        disp_ratio = guard_disp_px / float(scale_px)
+        # Bent-arm punch must have flexed elbow (not a straight lockout) and active excursion out of guard
+        if not (45.0 <= float(elbow_ang) <= 135.0 and disp_ratio >= 0.36 and float(ext_ratio) < 0.85):
+            continue
+        if f.get("in_guard"):
+            continue
+
+        prev_f = feats[i - 1]
+        next_f = feats[i + 1]
+        prev_d = float(prev_f.get("guard_dist_px") or prev_f.get("reach_px") or 0.0)
+        next_d = float(next_f.get("guard_dist_px") or next_f.get("reach_px") or 0.0)
+        if not (guard_disp_px >= prev_d - 1e-3 and guard_disp_px >= next_d - 1e-3):
+            continue
+
+        # Distinguish Hook (elbow raised near shoulder level) vs Uppercut (elbow dipped below shoulder & wrist rises)
+        el_drop_ratio = (el_xy[1] - sh_xy[1]) / float(scale_px)
+        wr_above_el_ratio = (el_xy[1] - wr_xy[1]) / float(scale_px)
+
+        punch_kind: str | None = None
+        punch_label: str | None = None
+        if -0.25 <= el_drop_ratio <= 0.30 and abs(wr_xy[1] - sh_xy[1]) <= 0.42 * float(scale_px):
+            punch_kind = f"{'lead' if hand_label == '前手' else 'rear'}_hook"
+            punch_label = f"{hand_label}平勾拳 (Hook)"
+        elif el_drop_ratio > 0.30 and wr_above_el_ratio >= 0.16:
+            punch_kind = f"{'lead' if hand_label == '前手' else 'rear'}_uppercut"
+            punch_label = f"{hand_label}上勾拳 (Uppercut)"
+
+        if punch_kind is not None and punch_label is not None:
+            last_pos = i
+            returned = any(bool(feats[j].get("in_guard")) for j in range(i + 1, min(n, i + 15)))
+            detected.append(
+                {
+                    "punch_id": f"{punch_kind}_{len(detected) + 1:02d}",
+                    "punch_kind": punch_kind,
+                    "punch_type": punch_label,
+                    "frame_index": src_idx,
+                    "timestamp_ms": round(float(f["timestamp_ms"]), 2),
+                    "elbow_angle_deg": round(float(elbow_ang), 1),
+                    "returned_to_guard": returned,
+                }
+            )
+    return detected
+
+
 def analyze_jab_and_one_two(
     frames: Sequence[dict[str, Any]],
     *,
@@ -1170,13 +1257,26 @@ def analyze_jab_and_one_two(
     )
     rear_metrics = compute_rear_straight_metrics(rear_seg, single_person_confirmed=single_person_confirmed)
 
+    jab_feat_map = {int(f["source_frame_index"]): f for f in jab_seg.get("frame_features", [])}
+    rear_feat_map = {int(f["source_frame_index"]): f for f in rear_seg.get("frame_features", [])}
+
+    def _is_bent_punch_peak(feat_map: dict[int, dict[str, Any]], frame_idx: int | None) -> bool:
+        if frame_idx is None or int(frame_idx) not in feat_map:
+            return False
+        ft = feat_map[int(frame_idx)]
+        ang = ft.get("elbow_angle_deg")
+        ext = ft.get("ext_ratio")
+        return ang is not None and ext is not None and float(ang) < 128.0 and float(ext) < 0.82
+
     jab_Real = [
         m for m in jab_metrics["action_metrics"]
         if "feint_or_incomplete_extension" not in m.get("quality_reasons", [])
+        and not _is_bent_punch_peak(jab_feat_map, m.get("extension_frame_index"))
     ]
     rear_Real = [
         m for m in rear_metrics["action_metrics"]
         if "feint_or_incomplete_extension" not in m.get("quality_reasons", [])
+        and not _is_bent_punch_peak(rear_feat_map, m.get("extension_frame_index"))
     ]
 
     combos: list[dict[str, Any]] = []
@@ -1243,6 +1343,50 @@ def analyze_jab_and_one_two(
     else:
         combo_feedback = "当前片段以单拳或后手练习为主，未检出明显的前手刺拳或 1-2 连击。"
 
+    straight_frames = {
+        int(m["extension_frame_index"])
+        for m in (jab_Real + rear_Real)
+        if m.get("extension_frame_index") is not None
+    }
+    lead_bent = _detect_bent_arm_punches(jab_seg, hand_label="前手", straight_frames=straight_frames)
+    rear_bent = _detect_bent_arm_punches(rear_seg, hand_label="后手", straight_frames=straight_frames)
+    bent_punches = sorted(lead_bent + rear_bent, key=lambda p: int(p["frame_index"]))
+    hook_count = sum(1 for p in bent_punches if p["punch_kind"].endswith("_hook"))
+    uppercut_count = sum(1 for p in bent_punches if p["punch_kind"].endswith("_uppercut"))
+
+    one_two_three_combos: list[dict[str, Any]] = []
+    used_bent: set[str] = set()
+    for c in combos:
+        r_act = next((r for r in rear_Real if r["action_id"] == c["rear_action_id"]), None)
+        if r_act is None or r_act.get("extension_ms") is None:
+            continue
+        r_ms = float(r_act["extension_ms"])
+        for bp in lead_bent:
+            if bp["punch_id"] in used_bent:
+                continue
+            dt3 = float(bp["timestamp_ms"]) - r_ms
+            if 40.0 <= dt3 <= max_combo_gap_ms:
+                used_bent.add(bp["punch_id"])
+                one_two_three_combos.append(
+                    {
+                        "combo_id": f"{sample_id}-123-{len(one_two_three_combos) + 1}",
+                        "combo_name": f"1-2-3 连击（刺拳 → 后手直拳 → {bp['punch_type']}）",
+                        "jab_frame_index": c["jab_extension_frame_index"],
+                        "rear_frame_index": c["rear_extension_frame_index"],
+                        "third_punch_frame_index": bp["frame_index"],
+                        "third_punch_type": bp["punch_type"],
+                        "two_to_three_ms": round(dt3, 1),
+                        "all_returned": bool(c["both_returned"] and bp["returned_to_guard"]),
+                    }
+                )
+                break
+
+    if bent_punches:
+        combo_feedback += (
+            f" 另检出屈臂拳法：平勾拳 {hook_count} 次、上勾拳 {uppercut_count} 次"
+            + (f"、1-2-3 经典三连击 {len(one_two_three_combos)} 组。" if one_two_three_combos else "。")
+        )
+
     return {
         "jab_segmentation": jab_seg,
         "jab_metrics": jab_metrics,
@@ -1252,5 +1396,10 @@ def analyze_jab_and_one_two(
         "jab_defense_score": jab_metrics["defense_score"],
         "one_two_combos": combos,
         "combo_count": len(combos),
+        "hook_count": hook_count,
+        "uppercut_count": uppercut_count,
+        "bent_arm_punches": bent_punches,
+        "one_two_three_combos": one_two_three_combos,
+        "one_two_three_count": len(one_two_three_combos),
         "combo_feedback": combo_feedback,
     }

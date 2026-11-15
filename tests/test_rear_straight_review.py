@@ -15,6 +15,10 @@ from boxing_coach.rear_straight_review import (
     export_review_annotation_json,
     segment_rear_straights,
 )
+from boxing_coach.scorecard_report import (
+    build_standalone_scorecard_html,
+    summarize_frames_for_batch,
+)
 
 
 def _make_landmark(index: int, x: float, y: float, *, state: str = "observed", vis: float = 0.95) -> dict:
@@ -279,6 +283,56 @@ class RearStraightReviewTests(unittest.TestCase):
         self.assertEqual(combo["combo_count"], 1)
         self.assertEqual(combo["one_two_combos"][0]["combo_interval_ms"], 200.0)
         self.assertTrue(combo["one_two_combos"][0]["both_returned"])
+
+    def test_hook_uppercut_one_two_three_and_scorecard_html(self):
+        frames: list[dict] = [_make_frame(i, i * 50.0) for i in range(11)]
+        # 1. Lead jab at frame 13 (650 ms)
+        frames.append(_make_frame(11, 550.0))
+        frames.append(_make_frame(12, 600.0, left_elbow_x=0.44, left_wrist_x=0.34))
+        frames.append(_make_frame(13, 650.0, left_elbow_x=0.36, left_wrist_x=0.20))
+        frames.append(_make_frame(14, 700.0, left_elbow_x=0.44, left_wrist_x=0.34))
+        frames.append(_make_frame(15, 750.0))
+        # 2. Rear straight at frame 17 (850 ms)
+        frames.append(_make_frame(16, 800.0, right_elbow_x=0.50, right_wrist_x=0.60))
+        frames.append(_make_frame(17, 850.0, right_elbow_x=0.56, right_wrist_x=0.74))
+        frames.append(_make_frame(18, 900.0, right_elbow_x=0.50, right_wrist_x=0.58))
+        frames.append(_make_frame(19, 950.0))
+        frames.append(_make_frame(20, 1000.0))
+        # 3. Lead hook at frame 21 (1050 ms): elbow raised at shoulder height (y=0.35), flexed ~90 deg, wrist reaches out
+        # L shoulder is at (0.52, 0.35). Put L elbow at (0.42, 0.35) and L wrist at (0.42, 0.25) -> 90 deg flexed hook!
+        f21 = _make_frame(21, 1050.0, left_elbow_x=0.42, left_elbow_y=0.35, left_wrist_x=0.39)
+        f21["landmarks"][4] = _make_landmark(15, 0.42, 0.23)
+        frames.append(f21)
+        for k in range(22, 28):
+            frames.append(_make_frame(k, k * 50.0))
+
+        combo = analyze_jab_and_one_two(frames, stance="orthodox", sample_id="combo-123")
+        self.assertGreaterEqual(combo["hook_count"], 1)
+        self.assertEqual(combo["one_two_three_count"], 1)
+        self.assertIn("1-2-3 连击", combo["one_two_three_combos"][0]["combo_name"])
+
+        batch_item = summarize_frames_for_batch(
+            frames,
+            entry_id="batch-01",
+            label="clip_123.mp4",
+            stance="orthodox",
+            view="side",
+        )
+        self.assertEqual(batch_item["summary_row"]["视频片段"], "clip_123.mp4")
+        self.assertIn("1 组 / 1 组", batch_item["summary_row"]["1-2 / 1-2-3 连击"])
+
+        html_bytes = build_standalone_scorecard_html(
+            clip_label="clip_123.mp4",
+            stance="orthodox",
+            view="side",
+            rear_metrics=batch_item["rear_metrics"],
+            combo_res=batch_item["combo_res"],
+            mt_res=batch_item["mt_res"],
+        )
+        html_text = html_bytes.decode("utf-8")
+        self.assertIn("AI 拳击与泰拳动作复盘评分报告", html_text)
+        self.assertIn("1-2-3 连击", html_text)
+        self.assertNotIn("<script", html_text.lower())
 
 
 if __name__ == "__main__":
