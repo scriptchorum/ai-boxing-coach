@@ -1,4 +1,4 @@
-"""Local video review and experimental pose inspection; no action assessment."""
+"""AI拳击与泰拳动作视觉分析系统主程序入口与交互工作台。"""
 
 from __future__ import annotations
 
