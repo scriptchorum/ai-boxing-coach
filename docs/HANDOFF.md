@@ -1,5 +1,27 @@
 # 项目交接
 
+## 2026年11月15日：本机完成 T08–T11（事件标注、后手直拳自动分段、回手时间与重复性指标、同条件本地历史复盘），全部标为 Done
+
+- **本轮交付内容**：
+  1. **T08 事件标注契约、分区防泄漏与可选事件微调**（`schemas/review-annotation.schema.json`、`src/boxing_coach/rear_straight_review.py`）：
+     - 新增 `ReviewAnnotation` JSON Schema（Draft 2020-12）与校验器 `REVIEW_ANNOTATION_VALIDATOR`；
+     - 新增 `check_participant_split_leakage`，检查 `participant_id`、`lineage_id`、`session_id`、`input_sha256` 在 `development` 与 `holdout` 之间的跨区泄漏；
+     - 新增 `apply_action_override` 与 `export_review_annotation_json`，支持在机器自动预标结果之上按需对单拳事件帧做人工微调并导出确定性 JSON。
+  2. **T09 后手直拳自动分段状态机**（`segment_rear_straights`）：
+     - 先将归一化关键点还原为像素坐标（`x_px = x * width`、`y_px = y * height`），基于参考窗口估算个人投影躯干尺度 `scale_px` 与起始护手区偏移，不使用统一“标准女性骨架”；
+     - 实现正/反架后手直拳四阶段状态机（`start` → `extension` → `return` → `hold_end`，连续保持 ≥100ms），自动识别并拦截假动作/半程伸展（`feint_or_incomplete_extension`）、未回位（`missing_return`）、回位保持不足（`insufficient_return_hold`）及关键点缺失。
+  3. **T10 描述性指标与重复性**（`compute_rear_straight_metrics`）：
+     - 使用解码帧 PTS 时间轴计算单次有效动作的 `return_time_ms = return_ms - extension_ms` 与最大伸展时刻的二维髋部投影偏移比 `torso_projection_shift_ratio`；
+     - 当有效动作数 ≥5 时按契约分位数线性插值公式计算同场次中位数 `median_ms` 与四分位距 `iqr_ms`；未确认单人时严格执行全 `null` 空值策略。
+  4. **T11 复盘界面整合与同条件本地历史对比**（`src/boxing_coach/pose_ui.py`、`app/main.py`、`build_history_entry`、`compare_same_condition_history`）：
+     - 在 Streamlit 姿态面板新增“后手直拳自动分段、回手时间与同条件历史复盘 (T08–T11)”折叠区，展示候选/有效拳数、中位回手时间与 IQR、逐拳事件与指标表、一键跳转最大伸展帧、按需导出 `boxing-rear-straight-annotation.json` 以及同条件本地历史对比；
+     - 严格要求站架、镜像、机位、模型 ID 与规则版本完全一致才并列展示，自动隔离不同条件的记录，不跨条件绘制趋势，不含体型审美或动作优劣评判。
+- **验证结果**：
+  - Python 单元测试 **137 项全部通过**（含新增 `tests/test_rear_straight_review.py` 6 项专项测试）、Node 播放器测试 **10 项通过**、契约校验 **3 份通过**、`pip check` 无冲突、22 个 Python 文件 `py_compile` 通过、`git diff --check` 通过。
+- **状态与下一步**：
+  - **T01、T03–T11 均已标为 `Done`**；
+  - 下一步推进 **T12（安装流程与本地数据缓存/报告安全删除）** 与 **T13（合成评估回归脚本与聚合报告）**。
+
 ## 2026年11月15日：按用户 D019/D020 确认收口 P0（T05–T07 Done）并开启 T08–T11 免手标连续开发
 
 - **决策依据**（[DECISIONS.md](DECISIONS.md) 中的 `D019`、`D020`）：

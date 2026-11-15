@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ai-boxing-coach.local/schemas/review-annotation.schema.json",
+  "title": "ReviewAnnotation",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "annotation_id",
+    "sample_id",
+    "annotator_code",
+    "stance",
+    "analyzable_status",
+    "review_status",
+    "ambiguity_reasons",
+    "actions"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1.0"
+    },
+    "annotation_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "sample_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "annotator_code": {
+      "type": "string",
+      "minLength": 1
+    },
+    "stance": {
+      "enum": ["orthodox", "southpaw", "unknown"]
+    },
+    "analyzable_status": {
+      "enum": ["analyzable", "partial", "rejected"]
+    },
+    "review_status": {
+      "enum": ["auto_prelabeled", "confirmed", "adjusted", "rejected"]
+    },
+    "ambiguity_reasons": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "uniqueItems": true
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/AnnotatedAction"
+      }
+    }
+  },
+  "$defs": {
+    "AnnotatedAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "action_id",
+        "action_kind",
+        "hand",
+        "source",
+        "status",
+        "quality_reasons",
+        "start_frame_index",
+        "start_ms",
+        "extension_frame_index",
+        "extension_ms",
+        "return_frame_index",
+        "return_ms",
+        "hold_end_frame_index",
+        "hold_end_ms"
+      ],
+      "properties": {
+        "action_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "action_kind": {
+          "const": "rear_straight"
+        },
+        "hand": {
+          "enum": ["right", "left", "unknown"]
+        },
+        "source": {
+          "enum": ["automatic", "manual"]
+        },
+        "status": {
+          "enum": ["valid", "partial", "rejected"]
+        },
+        "quality_reasons": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true
+        },
+        "start_frame_index": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "start_ms": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "extension_frame_index": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "extension_ms": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "return_frame_index": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "return_ms": {
+          "type": ["number", "null"],
+          "minimum": 0
+        },
+        "hold_end_frame_index": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "hold_end_ms": {
+          "type": ["number", "null"],
+          "minimum": 0
+        }
+      }
+    }
+  }
+}

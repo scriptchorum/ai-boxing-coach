@@ -9,6 +9,14 @@ from .synced_player import render_synced_player
 from .quality import assess_frames, reason_text, display_frame, VERSION, LABELS
 from .review import FILTERS, REACQUIRED, VERDICTS, recovery_references, review_indices, neighbors, summarize_reviews, export_reviews, import_reviews, read_review_file, MAX_REVIEW_BYTES
 from .evidence import EvidenceError, MAX_DEMO_FRAMES, build_demo_report, build_evidence_bundle
+from .rear_straight_review import (
+    apply_action_override,
+    build_history_entry,
+    compare_same_condition_history,
+    compute_rear_straight_metrics,
+    export_review_annotation_json,
+    segment_rear_straights,
+)
 from .strike_detector import StrikeAuditor, export_strike_audit_json
 from .subject_tracker import SubjectTracker
 
@@ -21,6 +29,8 @@ def clear_pose():
     st.session_state.pop('review_unrecorded_only',None)
     st.session_state.pop('pose_evidence_bundle',None)
     st.session_state.pop('pose_strike_audit',None)
+    st.session_state.pop('pose_rear_straight_overrides',None)
+    st.session_state.pop('pose_review_annotation',None)
     st.session_state.pop('pose_demo_frames',None)
     st.session_state.pop('pose_demo_report',None)
 
@@ -196,6 +206,138 @@ def render_strike_audit_section(cached, tracker_enabled):
             )
 
 
+def render_rear_straight_review_section(video, cached, mirror):
+    with st.expander('后手直拳自动分段、回手时间与同条件历史复盘 (T08–T11)', expanded=False):
+        st.caption(
+            '自动完成“起手→最大伸展→回手进入个人起始区→连续保持 ≥100ms”四阶段分段，计算回手时间、'
+            '同场次重复性（中位数/四分位距）与二维髋部投影偏移比；无需从零手标视频，可按需对单拳帧号做可选微调。'
+        )
+        c1, c2 = st.columns(2)
+        stance_opt = c1.selectbox(
+            '复盘站架',
+            ['正架 (右手后手 / Orthodox)', '反架 (左手后手 / Southpaw)'],
+            key='rs_stance_select',
+        )
+        stance = 'orthodox' if 'Orthodox' in stance_opt else 'southpaw'
+        view_opt = c2.selectbox('机位记录', ['侧面 (side)', '前斜 45° (front_45)'], key='rs_view_select')
+        view = 'side' if 'side' in view_opt else 'front_45'
+        single_ok = st.checkbox(
+            '确认当前片段为单人训练（启用回手时间与重复性统计）',
+            value=True,
+            key='rs_single_person_confirmed',
+        )
+
+        width = getattr(video.inspection, 'width', 1280)
+        height = getattr(video.inspection, 'height', 720)
+        seg = segment_rear_straights(
+            cached.frames,
+            width=width,
+            height=height,
+            stance=stance,
+            sample_id=f'run-{cached.start}-{cached.end}',
+        )
+
+        overrides = st.session_state.setdefault('pose_rear_straight_overrides', {})
+        for act_id, ov in list(overrides.items()):
+            if any(a['action_id'] == act_id for a in seg['actions']):
+                seg = apply_action_override(
+                    seg,
+                    cached.frames,
+                    act_id,
+                    start_frame_index=ov.get('start_frame_index'),
+                    extension_frame_index=ov.get('extension_frame_index'),
+                    return_frame_index=ov.get('return_frame_index'),
+                    hold_end_frame_index=ov.get('hold_end_frame_index'),
+                )
+
+        metrics = compute_rear_straight_metrics(seg, single_person_confirmed=single_ok)
+        rep = metrics.get('repeatability')
+        k1, k2, k3, k4 = st.columns(4)
+        k1.metric('候选后手直拳', f"{metrics['candidate_count']} 次")
+        k2.metric('有效完整动作', f"{metrics['valid_count']} 次")
+        k3.metric('同场次中位回手时间', f"{rep['median_ms']:.1f} ms" if rep else '需 ≥5 次有效动作')
+        k4.metric('同场次四分位距 (IQR)', f"{rep['iqr_ms']:.1f} ms" if rep else '-')
+        st.caption(metrics['limitations_notice'])
+
+        act_rows = []
+        for item in metrics['action_metrics']:
+            act_rows.append({
+                '动作编号': item['action_id'],
+                '来源': '人工微调' if item['source'] == 'manual' else '自动预标',
+                '状态': item['status'],
+                '起手帧': item['start_frame_index'],
+                '最大伸展帧': item['extension_frame_index'],
+                '回手进入帧': item['return_frame_index'] if item['return_frame_index'] is not None else '-',
+                '保持完成帧': item['hold_end_frame_index'] if item['hold_end_frame_index'] is not None else '-',
+                '回手时间 (ms)': f"{item['return_time_ms']:.1f}" if item['return_time_ms'] is not None else '-',
+                '二维髋偏移比': (
+                    f"{item['torso_projection_shift_ratio']:.3f}"
+                    if item['torso_projection_shift_ratio'] is not None
+                    else '-'
+                ),
+                '原因说明': '、'.join(item['quality_reasons']) or '完整合规',
+            })
+        if act_rows:
+            st.dataframe(act_rows, hide_index=True)
+            action_ids = [a['action_id'] for a in seg['actions']]
+            sel_act_id = st.selectbox('选择要定位或微调的动作（可选）', action_ids, key='rs_select_action')
+            sel_act = next(a for a in seg['actions'] if a['action_id'] == sel_act_id)
+            if sel_act['extension_frame_index'] is not None:
+                st.button(
+                    '跳转至该拳最大伸展帧',
+                    key='rs_jump_extension_btn',
+                    on_click=go_review,
+                    args=(int(sel_act['extension_frame_index']),),
+                )
+        else:
+            st.caption('当前区间未检出后手直拳候选动作。')
+
+        ann_key = (cached.key, stance, tuple(sorted(overrides.keys())))
+        if st.button('准备事件标注与分段 JSON（T08/T09）', key='review_annotation_prepare'):
+            st.session_state.pose_review_annotation = {
+                'key': ann_key,
+                'json': export_review_annotation_json(seg),
+            }
+        saved_ann = st.session_state.get('pose_review_annotation')
+        if saved_ann and saved_ann.get('key') == ann_key:
+            st.download_button(
+                '下载事件标注与分段 JSON',
+                data=saved_ann['json'],
+                file_name='boxing-rear-straight-annotation.json',
+                mime='application/json',
+                key='review_annotation_download',
+                on_click='ignore',
+            )
+
+        history = st.session_state.setdefault('pose_local_history', [])
+        if st.button('将本次统计加入本地同条件历史对比（T11）', key='rs_save_history_btn'):
+            entry = build_history_entry(
+                metrics,
+                entry_id=f'hist-{len(history) + 1}',
+                label=f'源帧 {cached.start}–{cached.end}',
+                mirror=mirror,
+                view=view,
+                model_id=cached.model.get('id', 'mediapipe_pose_landmarker_lite'),
+            )
+            history.append(entry)
+            st.session_state.pose_local_history = history
+
+        if history:
+            comp = compare_same_condition_history(
+                history,
+                reference_condition={
+                    'stance': stance,
+                    'mirror': bool(mirror),
+                    'view': view,
+                    'model_id': cached.model.get('id', 'mediapipe_pose_landmarker_lite'),
+                    'rule_version': metrics['rule_version'],
+                },
+            )
+            st.caption(comp['comparison_note'])
+            if comp['compatible_entries']:
+                st.dataframe(comp['compatible_entries'], hide_index=True)
+
+
 def render_pose_panel(video,start,end,mirror):
     st.subheader('播放并查看骨架',anchor='pose-playback')
     st.write('先点击下方“识别所选区间的人体关键点”，完成后播放器会出现在这里。刷新或换片后需要重新识别。')
@@ -258,6 +400,7 @@ def render_pose_panel(video,start,end,mirror):
     st.dataframe([{'关键点':name,'未满足绘制条件的帧数':count,'总帧数':summary['frames']}
                   for name,count in summary['unavailable_joint_frames'].items()],hide_index=True)
     render_strike_audit_section(cached, enable_tracker)
+    render_rear_straight_review_section(video, cached, mirror)
     st.subheader('快速人工核对')
     reviews=st.session_state.setdefault('pose_reviews',{})
     wrong_target,misaligned=VERDICTS[2:4]
