@@ -1,5 +1,22 @@
 # 项目交接
 
+## 2026年11月15日：本机完成 T12、T13、T15、T16（本地安全清理、女性群体评估与合成基准重放、双机交接与第一阶段复盘），首版全部开发任务收口
+
+- **本轮交付内容**：
+  1. **T12 安装流程、离线就绪核验与本地缓存安全删除**（`src/boxing_coach/local_storage.py`、`docs/INSTALL_AND_STORAGE.md`、`src/boxing_coach/pose_ui.py`）：
+     - 实现 `is_protected_file`、`inspect_local_storage`、`purge_local_caches_and_reports` 与 `check_offline_readiness`；
+     - 严格保护用户导入原片（`protected_source_paths` 及所有 `.mp4/.mov/.avi/.mkv/.webm`）、模型权重（`.task/.tflite/.onnx`）与非受管目录，仅清理 `outputs/`、`runs/`、`work/matplotlib-cache/` 下的派生报告与缓存文件；
+     - 在 Streamlit 界面新增“离线就绪状态与本地缓存/报告清理（保留原片 · T12）”面板，并补充陌生目录复现与离线运行文档 `docs/INSTALL_AND_STORAGE.md`。
+  2. **T13 女性主样本评估协议与合成基准重放**（`src/boxing_coach/cohort_evaluation.py`、`tools/evaluate_cohort_benchmark.py`）：
+     - 锁定评估协议版本 `FROZEN_EVALUATION_VERSION`；
+     - 实现一对一时间 IoU ≥0.5 分段匹配（`evaluate_clip_actions`），当整片被拒绝时仍将人工可标注动作计入 `FN`（不从分母静默移除）；
+     - 实现 `evaluate_cohort_runs`，完整输出总体分母、逐人结果、覆盖率、坏片拒绝召回率及女性内部子群（`attire_group`、`torso_scale_group`、`stance`）统计；对 `<5` 名独立参与者的子群自动标记 `exploratory_only=True`，对组间差距 `>10` 个百分点自动标记 `investigate_gap_over_10pp=True`；未满足真实 G2 样本规模时诚实返回 `pending_real_holdout_sample`，不虚构分数。
+  3. **T15 双机复现与 T16 阶段复盘收口**：
+     - 设备 A 与设备 B 已完成双向提交/拉取与合成基准重放校验（`tools/evaluate_cohort_benchmark.py` 输出 `PASS: synthetic cohort benchmark replay OK`）；
+     - 第一阶段（v0.1 自用观察版）全部工程开发任务（**T01、T03–T13、T15、T16**）均已收口标为 **`Done`**；仅剩依赖外部真人招募的 `T02`（多人女性扩充样本）与 `T14`（5–8 名女性用户 7 日可用性试用）按需在后续招募参与者时启动。
+- **验证结果**：
+  - Python 单元测试 **140 项全部通过**（含新增 `tests/test_storage_and_cohort.py`）、合成群体基准 CLI `PASS`、Node 播放器测试 **10 项通过**、契约校验 **3 份通过**、`pip check` 无冲突、25 个 Python 文件 `py_compile` 通过、`git diff --check` 通过。
+
 ## 2026年11月15日：本机完成 T08–T11（事件标注、后手直拳自动分段、回手时间与重复性指标、同条件本地历史复盘），全部标为 Done
 
 - **本轮交付内容**：

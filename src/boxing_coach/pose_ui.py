@@ -9,6 +9,7 @@ from .synced_player import render_synced_player
 from .quality import assess_frames, reason_text, display_frame, VERSION, LABELS
 from .review import FILTERS, REACQUIRED, VERDICTS, recovery_references, review_indices, neighbors, summarize_reviews, export_reviews, import_reviews, read_review_file, MAX_REVIEW_BYTES
 from .evidence import EvidenceError, MAX_DEMO_FRAMES, build_demo_report, build_evidence_bundle
+from .local_storage import check_offline_readiness, inspect_local_storage, purge_local_caches_and_reports
 from .rear_straight_review import (
     apply_action_override,
     build_history_entry,
@@ -338,6 +339,36 @@ def render_rear_straight_review_section(video, cached, mirror):
                 st.dataframe(comp['compatible_entries'], hide_index=True)
 
 
+def render_local_storage_section(video):
+    with st.expander('离线就绪状态与本地缓存/报告清理（保留原片 · T12）', expanded=False):
+        readiness = check_offline_readiness()
+        if readiness['offline_ready']:
+            st.caption(
+                f"离线状态：模型资产 `{readiness['asset_id']}` 已就绪并通过 SHA-256 校验，断网可直接运行。"
+            )
+        else:
+            st.caption(f"离线状态提示：{readiness['reason']}")
+        protected = [video.path] if getattr(video, 'path', None) is not None else []
+        storage_info = inspect_local_storage(protected_source_paths=protected)
+        st.caption(
+            f"受管缓存目录（outputs/、runs/、work/matplotlib-cache/）当前可清理派生文件："
+            f"{storage_info['removable_files']} 个（{storage_info['removable_bytes']} 字节）；"
+            f"已自动保护原片与模型资产。"
+        )
+        if st.button('清理本地派生缓存与报告（不删原片）', key='purge_local_caches_btn'):
+            res = purge_local_caches_and_reports(protected_source_paths=protected)
+            st.session_state.pop('pose_evidence_bundle', None)
+            st.session_state.pop('pose_strike_audit', None)
+            st.session_state.pop('pose_review_annotation', None)
+            st.session_state.pop('pose_demo_frames', None)
+            st.session_state.pop('pose_demo_report', None)
+            st.session_state.pop('pose_local_history', None)
+            st.success(
+                f"已清理 {res['deleted_files']} 个派生缓存文件（{res['deleted_bytes']} 字节），"
+                f"保留受保护文件 {res['preserved_protected_files']} 个；用户导入原片未受影响。"
+            )
+
+
 def render_pose_panel(video,start,end,mirror):
     st.subheader('播放并查看骨架',anchor='pose-playback')
     st.write('先点击下方“识别所选区间的人体关键点”，完成后播放器会出现在这里。刷新或换片后需要重新识别。')
@@ -401,6 +432,7 @@ def render_pose_panel(video,start,end,mirror):
                   for name,count in summary['unavailable_joint_frames'].items()],hide_index=True)
     render_strike_audit_section(cached, enable_tracker)
     render_rear_straight_review_section(video, cached, mirror)
+    render_local_storage_section(video)
     st.subheader('快速人工核对')
     reviews=st.session_state.setdefault('pose_reviews',{})
     wrong_target,misaligned=VERDICTS[2:4]
