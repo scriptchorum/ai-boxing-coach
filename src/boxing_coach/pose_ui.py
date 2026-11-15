@@ -353,7 +353,7 @@ def render_pose_panel(video,start,end,mirror):
         st.image(draw_pose(decoded.image_rgb, tracking),
                  caption=f"跟踪试验 · 源帧 {index} · {labels[tracking['reason']]}", width='stretch')
         st.caption('请对照原画确认是否跟对人。下方核对记录和证据包仍对应上方原有骨架。')
-    evidence_key=(cached.key,index,VERSION)
+    evidence_key=(cached.key,index,VERSION,enable_tracker)
     prepared=st.session_state.get('pose_evidence_bundle')
     if prepared is not None and prepared['key'] != evidence_key:
         st.session_state.pop('pose_evidence_bundle',None)

@@ -232,11 +232,11 @@ def _demo_html(frames,model,rule_version):
     cards=[]
     state_text={'full_display':'完整显示','partial_display':'部分显示','hidden':'全部隐藏'}
     for position,frame in enumerate(frames):
-        reasons='、'.join(frame['display']['reason_codes']) or '无当前规则原因'
+        reasons='、'.join(LABELS[code] for code in frame['display']['reason_codes']) or '无当前规则原因'
         hidden='、'.join(frame['display']['hidden_parts']) or '无'
         cards.append(f'''<section>
 <h2>源帧 {frame['source_frame_index']} · {frame['timestamp_ms']/1000:.3f} 秒</h2>
-<p>模型状态：{escape(frame['model_status'])}；显示状态：{state_text[frame['display']['state']]}；原因码：{escape(reasons)}；未显示部位：{escape(hidden)}。</p>
+<p>模型状态：{escape(frame['model_status'])}；显示状态：{state_text[frame['display']['state']]}；显示原因：{escape(reasons)}；未显示部位：{escape(hidden)}。</p>
 <div class="images"><figure><img src="frames/{position:03d}/source.png" alt="源帧"><figcaption>显示帧</figcaption></figure>
 <figure><img src="frames/{position:03d}/overlay.png" alt="骨架对照"><figcaption>过滤后的模型骨架</figcaption></figure></div>
 </section>''')

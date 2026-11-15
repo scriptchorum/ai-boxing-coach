@@ -319,6 +319,11 @@ class PoseTests(unittest.TestCase):
             self.assertEqual(manifest['timestamp_ms'],0)
             self.assertTrue(manifest['private_local_bundle'])
         self.assertIn('pose_evidence_bundle',app.session_state)
+        app.checkbox(key='trial_tracking_filter').set_value(True).run()
+        self.assertNotIn('pose_evidence_bundle',app.session_state)
+        self.assertFalse(any(button.key == 'demo_evidence_add' for button in app.button))
+        app.button(key='evidence_prepare').click().run()
+        self.assertIn('pose_evidence_bundle',app.session_state)
         with patch('boxing_coach.pose_ui.st.download_button',wraps=st.download_button) as download:
             app.number_input(key='pose_index').set_value(1).run()
             self.assertFalse(any(call.kwargs['key']=='evidence_download'
