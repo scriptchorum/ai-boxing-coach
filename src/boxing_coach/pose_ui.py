@@ -144,12 +144,12 @@ def render_review_files(cached,uploaded):
 
 
 def render_strike_audit_section(cached, tracker_enabled):
-    with st.expander('泰拳击打与防守动作审计 (实验性门禁评估)', expanded=False):
+    with st.expander('泰拳击打与防守动作审计（前/后手直拳峰值、护头掉落率与转髋角度）', expanded=True):
         st.caption('基于姿态关键点在时间线上的伸展峰值审计直拳动作，并根据质量门禁（单人确认、关键点可见度）输出客观观察结果。')
         c1, c2 = st.columns(2)
         stance_label = c1.selectbox('站架选择', ['正架 (右手后手 / Orthodox)', '反架 (左手后手 / Southpaw)'], key='audit_stance_select')
         stance = 'orthodox' if 'Orthodox' in stance_label else 'southpaw'
-        single_person = c2.checkbox('目视确认：训练区域无背景人物干扰 (解锁合规指标计算)', value=False, key='audit_single_person_confirmed')
+        single_person = c2.checkbox('目视确认：训练区域无背景人物干扰 (解锁合规指标计算)', value=True, key='audit_single_person_confirmed')
 
         auditor = StrikeAuditor(stance=stance)
         audit_res = auditor.audit_pose_run(cached, single_person_confirmed=single_person, tracker=tracker_enabled)
@@ -208,9 +208,10 @@ def render_strike_audit_section(cached, tracker_enabled):
 
 
 def render_rear_straight_review_section(video, cached, mirror):
-    with st.expander('后手直拳自动分段、回手时间与同条件历史复盘 (T08–T11)', expanded=False):
+    st.subheader('🎯 后手直拳专项复盘：最高优先建议与回防评分')
+    with st.expander('后手直拳自动分段、回防评分、最高优先建议与同条件历史复盘 (T08–T11)', expanded=True):
         st.caption(
-            '自动完成“起手→最大伸展→回手进入个人起始区→连续保持 ≥100ms”四阶段分段，计算回手时间、'
+            '自动完成“起手→最大伸展→回手进入个人起始区→连续保持 ≥100ms”四阶段分段，计算回防评分、最高优先建议、回手时间、'
             '同场次重复性（中位数/四分位距）与二维髋部投影偏移比；无需从零手标视频，可按需对单拳帧号做可选微调。'
         )
         c1, c2 = st.columns(2)
@@ -223,7 +224,7 @@ def render_rear_straight_review_section(video, cached, mirror):
         view_opt = c2.selectbox('机位记录', ['侧面 (side)', '前斜 45° (front_45)'], key='rs_view_select')
         view = 'side' if 'side' in view_opt else 'front_45'
         single_ok = st.checkbox(
-            '确认当前片段为单人训练（启用回手时间与重复性统计）',
+            '确认当前片段为单人训练（启用回防评分、回手时间与重复性统计）',
             value=True,
             key='rs_single_person_confirmed',
         )
@@ -253,11 +254,27 @@ def render_rear_straight_review_section(video, cached, mirror):
 
         metrics = compute_rear_straight_metrics(seg, single_person_confirmed=single_ok)
         rep = metrics.get('repeatability')
-        k1, k2, k3, k4 = st.columns(4)
+        k0, k1, k2, k3, k4 = st.columns(5)
+        k0.metric('回防评分', metrics.get('defense_grade', '暂无'))
         k1.metric('候选后手直拳', f"{metrics['candidate_count']} 次")
         k2.metric('有效完整动作', f"{metrics['valid_count']} 次")
         k3.metric('同场次中位回手时间', f"{rep['median_ms']:.1f} ms" if rep else '需 ≥5 次有效动作')
         k4.metric('同场次四分位距 (IQR)', f"{rep['iqr_ms']:.1f} ms" if rep else '-')
+
+        st.markdown('**💡 本段最高优先建议（Top 1）：**')
+        score_val = metrics.get('defense_score')
+        if score_val is not None and score_val >= 80:
+            st.success(metrics['top_priority_advice'])
+        else:
+            st.warning(metrics['top_priority_advice'])
+        top_frame = metrics.get('top_priority_frame_index')
+        if top_frame is not None:
+            st.button(
+                f'定位至最高优先建议对应帧（源帧 {top_frame}）',
+                key='rs_jump_top_advice_btn',
+                on_click=go_review,
+                args=(int(top_frame),),
+            )
         st.caption(metrics['limitations_notice'])
 
         act_rows = []
@@ -424,15 +441,16 @@ def render_pose_panel(video,start,end,mirror):
         st.error('源视频已失效，请重新打开并识别。')
         return
     st.caption('更精确地检查某一帧，可继续使用下方“骨架核对源帧号”。')
-    summary = cached.summary()
-    st.write(f"已处理 {summary['frames']} 帧，耗时 {summary['elapsed_seconds']:.1f} 秒。单个模型候选 {summary['single_model_pose']} 帧；未检出 {summary['no_pose']} 帧；多个候选 {summary['multiple_poses']} 帧。")
-    st.caption('只检出一个候选不证明画面中只有一人，模型也可能跟到背景人物；本版不识别身份、不跨帧确认同一人。请目视核对，勿将背景人物骨架当作训练者。')
-    st.warning('骨架是未经核实的模型估计：遮挡、出框或拿取手机时，即使置信信号较高，也可能连到背景人物或器械上。请先选择稳定、单人全身可见的区间；本版尚不能自动排除这些错误。')
-    st.dataframe([{'关键点':name,'未满足绘制条件的帧数':count,'总帧数':summary['frames']}
-                  for name,count in summary['unavailable_joint_frames'].items()],hide_index=True)
-    render_strike_audit_section(cached, enable_tracker)
     render_rear_straight_review_section(video, cached, mirror)
+    render_strike_audit_section(cached, enable_tracker)
     render_local_storage_section(video)
+    summary = cached.summary()
+    with st.expander('查看关键点统计与各部位未绘制帧数', expanded=False):
+        st.write(f"已处理 {summary['frames']} 帧，耗时 {summary['elapsed_seconds']:.1f} 秒。单个模型候选 {summary['single_model_pose']} 帧；未检出 {summary['no_pose']} 帧；多个候选 {summary['multiple_poses']} 帧。")
+        st.caption('只检出一个候选不证明画面中只有一人，模型也可能跟到背景人物；本版不识别身份、不跨帧确认同一人。请目视核对，勿将背景人物骨架当作训练者。')
+        st.warning('骨架是未经核实的模型估计：遮挡、出框或拿取手机时，即使置信信号较高，也可能连到背景人物或器械上。请先选择稳定、单人全身可见的区间；本版尚不能自动排除这些错误。')
+        st.dataframe([{'关键点':name,'未满足绘制条件的帧数':count,'总帧数':summary['frames']}
+                      for name,count in summary['unavailable_joint_frames'].items()],hide_index=True)
     st.subheader('快速人工核对')
     reviews=st.session_state.setdefault('pose_reviews',{})
     wrong_target,misaligned=VERDICTS[2:4]

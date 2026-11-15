@@ -203,6 +203,10 @@ class RearStraightReviewTests(unittest.TestCase):
         self.assertIsNotNone(metrics["repeatability"])
         self.assertEqual(metrics["repeatability"]["median_ms"], 100.0)
         self.assertEqual(metrics["repeatability"]["iqr_ms"], 0.0)
+        self.assertEqual(metrics["defense_score"], 100)
+        self.assertIn("A · 回防稳固", metrics["defense_grade"])
+        self.assertIn("最高优先", metrics["top_priority_advice"])
+        self.assertIsNotNone(metrics["top_priority_frame_index"])
         self.assertTrue(all(m["return_time_ms"] == 100.0 for m in metrics["action_metrics"]))
         self.assertTrue(all(m["torso_projection_shift_ratio"] is not None for m in metrics["action_metrics"]))
 
@@ -211,6 +215,7 @@ class RearStraightReviewTests(unittest.TestCase):
         self.assertEqual(unconfirmed["status"], "rejected")
         self.assertEqual(unconfirmed["valid_count"], 0)
         self.assertIsNone(unconfirmed["repeatability"])
+        self.assertIsNone(unconfirmed["defense_score"])
         self.assertTrue(all(m["return_time_ms"] is None for m in unconfirmed["action_metrics"]))
         self.assertTrue(all(m["torso_projection_shift_ratio"] is None for m in unconfirmed["action_metrics"]))
 

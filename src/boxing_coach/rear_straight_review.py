@@ -724,6 +724,13 @@ def compute_rear_straight_metrics(
     else:
         report_status = "partial"
 
+    coaching = _build_defense_score_and_top_advice(
+        action_metrics,
+        valid_return_times=valid_return_times,
+        repeatability=repeatability,
+        single_person_confirmed=bool(single_person_confirmed),
+    )
+
     return {
         "sample_id": segmentation["sample_id"],
         "stance": segmentation["stance"],
@@ -738,11 +745,150 @@ def compute_rear_straight_metrics(
         "metric_config": dict(segmentation["metric_config"]),
         "action_metrics": action_metrics,
         "repeatability": repeatability,
+        "defense_score": coaching["defense_score"],
+        "defense_grade": coaching["defense_grade"],
+        "top_priority_advice": coaching["top_priority_advice"],
+        "top_priority_frame_index": coaching["top_priority_frame_index"],
         "quality_reasons": report_reasons,
         "limitations_notice": (
             "本报告仅描述画面内可见关键点的回手时间（毫秒）、同场次中位数/四分位距及二维髋部投影偏移比；"
             "不代表真实三维拳速、拳力、身体重心平衡或动作优劣评价，不包含任何体型或外貌评价。"
         ),
+    }
+
+
+def _build_defense_score_and_top_advice(
+    action_metrics: Sequence[dict[str, Any]],
+    *,
+    valid_return_times: Sequence[float],
+    repeatability: dict[str, Any] | None,
+    single_person_confirmed: bool,
+) -> dict[str, Any]:
+    """Compute an intuitive 0-100 return-defense score and single highest-priority advice."""
+    if not single_person_confirmed:
+        return {
+            "defense_score": None,
+            "defense_grade": "待开启单人确认",
+            "top_priority_advice": "请勾选“确认当前片段为单人训练”，即可查看本段回防评分与最高优先建议。",
+            "top_priority_frame_index": None,
+        }
+
+    real_attempts = [
+        m for m in action_metrics if "feint_or_incomplete_extension" not in m.get("quality_reasons", [])
+    ]
+    if not real_attempts:
+        return {
+            "defense_score": None,
+            "defense_grade": "暂无有效出拳",
+            "top_priority_advice": (
+                "当前选段内未检出完整伸展的后手直拳（或关键点被遮挡）。"
+                "建议选取侧面/前斜 45°、肩肘腕清晰可见的出拳片段，或确认站架（正架/反架）是否匹配。"
+            ),
+            "top_priority_frame_index": action_metrics[0]["extension_frame_index"] if action_metrics else None,
+        }
+
+    valid_count = len(valid_return_times)
+    completion_ratio = valid_count / len(real_attempts)
+
+    # 1. Completion component (up to 60 points)
+    completion_pts = 60.0 * completion_ratio
+
+    # 2. Return speed component (up to 30 points): <=220ms gets full 30, 550ms+ gets 8
+    if valid_return_times:
+        ref_ms = float(repeatability["median_ms"]) if repeatability else _median(valid_return_times)
+        speed_factor = max(0.0, min(1.0, (550.0 - ref_ms) / (550.0 - 220.0)))
+        speed_pts = 8.0 + 22.0 * speed_factor
+    else:
+        ref_ms = None
+        speed_pts = 0.0
+
+    # 3. Consistency component (up to 10 points)
+    if repeatability is not None:
+        iqr_ms = float(repeatability["iqr_ms"])
+        consistency_factor = max(0.0, min(1.0, (180.0 - iqr_ms) / 150.0))
+        consistency_pts = 10.0 * consistency_factor
+    elif valid_count > 0:
+        consistency_pts = 7.0
+    else:
+        consistency_pts = 0.0
+
+    score = int(round(max(0.0, min(100.0, completion_pts + speed_pts + consistency_pts))))
+    if score >= 85:
+        grade = f"{score} 分（A · 回防稳固）"
+    elif score >= 70:
+        grade = f"{score} 分（B · 回防良好）"
+    elif score >= 50:
+        grade = f"{score} 分（C · 回防待加强）"
+    else:
+        grade = f"{score} 分（D · 急需强化收手护头）"
+
+    # Determine single highest-priority actionable advice
+    missing_ret = [
+        m for m in real_attempts if "missing_return" in m.get("quality_reasons", [])
+    ]
+    short_hold = [
+        m for m in real_attempts if "insufficient_return_hold" in m.get("quality_reasons", [])
+    ]
+    slow_punches = [
+        m for m in real_attempts if m.get("return_time_ms") is not None and float(m["return_time_ms"]) > 380.0
+    ]
+
+    if missing_ret:
+        first = missing_ret[0]
+        f_idx = first["extension_frame_index"]
+        advice = (
+            f"【最高优先：出拳后及时收手】动作 {first['action_id']}（最大伸展源帧 {f_idx}）出拳后后手未回到个人起始护头区。"
+            "建议击打到点后立即沿原路弹回下颌/腮旁，避免出拳后掉手或停留在外。"
+        )
+        target_frame = f_idx
+    elif short_hold:
+        first = short_hold[0]
+        f_idx = first.get("return_frame_index") or first["extension_frame_index"]
+        advice = (
+            f"【最高优先：回防后稳住护头】动作 {first['action_id']}（回手源帧 {f_idx}）虽然触达护头区，但保持不足 100ms 即再次离开或掉手。"
+            "建议收拳归位后先稳固护头再做下一动作。"
+        )
+        target_frame = f_idx
+    elif slow_punches:
+        slowest = max(slow_punches, key=lambda m: float(m["return_time_ms"]))
+        f_idx = slowest["extension_frame_index"]
+        advice = (
+            f"【最高优先：加快回手速度】动作 {slowest['action_id']}（最大伸展源帧 {f_idx}）回手耗时 {slowest['return_time_ms']:.0f} ms 偏慢。"
+            "建议减少击打最远端的推压停留，做到“快打快收”。"
+        )
+        target_frame = f_idx
+    elif valid_return_times and ref_ms is not None:
+        best_or_first = next((m for m in real_attempts if m.get("return_time_ms") is not None), real_attempts[0])
+        f_idx = best_or_first["extension_frame_index"]
+        shifts = [
+            float(m["torso_projection_shift_ratio"])
+            for m in real_attempts
+            if m.get("torso_projection_shift_ratio") is not None
+        ]
+        if shifts and _median(shifts) < 0.04:
+            advice = (
+                f"【最高优先：巩固回防并带动送髋】当前回防扎实（中位回手 {ref_ms:.0f} ms），"
+                f"但出拳时二维髋部偏移较小（约 {_median(shifts):.3f}）。可在保持快收护头的前提下，适度加强后脚蹬地转髋。"
+            )
+        else:
+            advice = (
+                f"【最高优先：保持当前收手节奏】本段 {valid_count} 次有效后手直拳均完整回防并稳固保持 ≥100ms"
+                f"（参考回手时间 {ref_ms:.0f} ms），收手护头习惯良好！"
+            )
+        target_frame = f_idx
+    else:
+        first = real_attempts[0]
+        target_frame = first["extension_frame_index"]
+        advice = (
+            f"【最高优先：改善机位与关键点可见度】动作 {first['action_id']}（源帧 {target_frame}）期间肩/肘/腕关键点存在遮挡或置信度不足，"
+            "建议保持正侧面或前斜 45° 全身无遮挡拍摄。"
+        )
+
+    return {
+        "defense_score": score,
+        "defense_grade": grade,
+        "top_priority_advice": advice,
+        "top_priority_frame_index": target_frame,
     }
 
 
