@@ -1,13 +1,17 @@
 """Standalone offline HTML training scorecard and multi-video batch comparison helper."""
 from __future__ import annotations
 
+import base64
 import html
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
+from PIL import Image
+
 from .muaythai_metrics import analyze_muaythai_arsenal
-from .pose import extract_pose
-from .preview import load_preview, selection_times
+from .pose import draw_pose, extract_pose
+from .preview import load_preview, read_preview_frame, selection_times
 from .rear_straight_review import (
     analyze_jab_and_one_two,
     build_history_entry,
@@ -123,7 +127,7 @@ def batch_review_video_files(
         if progress_callback is not None:
             progress_callback(idx - 1, total, p.name)
         try:
-            vid = load_preview(str(p), allow_over_limit=True)
+            vid = load_preview(str(p), allow_extended_formats=True)
             end_frame = _auto_clamped_end_frame(vid.inspection, 0)
             run = extract_pose(vid, 0, end_frame, correct_mirror=mirror)
             item = summarize_frames_for_batch(
@@ -154,6 +158,65 @@ def batch_review_video_files(
     }
 
 
+def extract_keyframe_previews(
+    video: Any,
+    pose_run: Any,
+    *,
+    mirror: bool,
+    rear_metrics: dict[str, Any],
+    combo_res: dict[str, Any],
+    mt_res: dict[str, Any],
+    max_frames: int = 4,
+) -> list[dict[str, Any]]:
+    """Render up to max_frames keyframe skeleton overlay PNGs (base64) for the standalone HTML scorecard."""
+    if video is None or pose_run is None or not getattr(pose_run, "frames", None):
+        return []
+    frame_map = {int(f["source_frame_index"]): f for f in pose_run.frames}
+    candidates: list[tuple[int, str]] = []
+    top_f = rear_metrics.get("top_priority_frame_index")
+    if top_f is not None and int(top_f) in frame_map:
+        candidates.append((int(top_f), "头号优先建议对应帧"))
+    for act in rear_metrics.get("action_metrics", []):
+        ext_f = act.get("extension_frame_index")
+        if ext_f is not None and int(ext_f) in frame_map:
+            candidates.append((int(ext_f), f"后手直拳峰值 ({act['action_id']})"))
+    for bp in combo_res.get("bent_arm_punches", []):
+        bf = bp.get("frame_index")
+        if bf is not None and int(bf) in frame_map:
+            candidates.append((int(bf), str(bp["punch_type"])))
+    for le in mt_res.get("leg_events", []):
+        lf = le.get("frame_index")
+        if lf is not None and int(lf) in frame_map:
+            candidates.append((int(lf), str(le["technique_name"])))
+
+    seen: set[int] = set()
+    previews: list[dict[str, Any]] = []
+    for f_idx, title in candidates:
+        if f_idx in seen:
+            continue
+        seen.add(f_idx)
+        try:
+            pf = frame_map[f_idx]
+            raw = read_preview_frame(video, f_idx, correct_mirror=mirror)
+            over = draw_pose(raw.image_rgb, pf)
+            buf = BytesIO()
+            Image.fromarray(over).save(buf, format="PNG", optimize=False)
+            b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+            previews.append(
+                {
+                    "frame_index": f_idx,
+                    "timestamp_ms": float(pf.get("timestamp_ms", 0.0)),
+                    "title": title,
+                    "png_b64": b64,
+                }
+            )
+            if len(previews) >= max_frames:
+                break
+        except Exception:
+            continue
+    return previews
+
+
 def build_standalone_scorecard_html(
     *,
     clip_label: str,
@@ -162,6 +225,7 @@ def build_standalone_scorecard_html(
     rear_metrics: dict[str, Any],
     combo_res: dict[str, Any],
     mt_res: dict[str, Any],
+    keyframe_previews: Sequence[dict[str, Any]] = (),
 ) -> bytes:
     """Build a self-contained offline HTML training scorecard report (B01/B02/B03/T08-T11)."""
     esc = html.escape
@@ -225,6 +289,20 @@ def build_standalone_scorecard_html(
             f"<td>{'保持' if mc['guard_kept_on_leg'] else '下掉'}</td></tr>"
         )
     mt_table_body = "".join(mt_rows_html) or "<tr><td colspan='5'>当前区间未检出拳腿/拳膝立体连击</td></tr>"
+
+    kf_cards = []
+    for kp in keyframe_previews:
+        kf_cards.append(
+            f"<div class='metric' style='text-align:center'>"
+            f"<div class='label'>{esc(str(kp.get('title', '关键帧')))} · 源帧 {esc(str(kp.get('frame_index')))} ({float(kp.get('timestamp_ms', 0.0))/1000.0:.2f}s)</div>"
+            f"<img src='data:image/png;base64,{kp.get('png_b64', '')}' style='max-width:100%;border-radius:6px;margin-top:6px' alt='关键帧骨架图'>"
+            f"</div>"
+        )
+    kf_section_html = (
+        f"<div class='card'><h2>五、关键动作峰值与纠错证据帧骨架图</h2><div class='grid'>{''.join(kf_cards)}</div></div>"
+        if kf_cards
+        else ""
+    )
 
     doc = f"""<!doctype html>
 <html lang="zh-CN">
@@ -311,6 +389,7 @@ def build_standalone_scorecard_html(
     </table>
     <p class="muted">{esc(str(rear_metrics.get('limitations_notice', '')))}</p>
   </div>
+  {kf_section_html}
 </body>
 </html>"""
     return doc.encode("utf-8")

@@ -4,7 +4,7 @@ import streamlit as st
 from .model_assets import AssetError
 from .pose import JOINTS, LEFT_COLOR, RIGHT_COLOR, PoseError, draw_pose, drawable, extract_pose, run_key
 from .preview import read_preview_frame
-from .video_io import MediaInputError
+from .video_io import SUPPORTED_EXTENSIONS, MediaInputError
 from .synced_player import render_synced_player
 from .quality import assess_frames, reason_text, display_frame, VERSION, LABELS
 from .review import FILTERS, REACQUIRED, VERDICTS, recovery_references, review_indices, neighbors, summarize_reviews, export_reviews, import_reviews, read_review_file, MAX_REVIEW_BYTES
@@ -17,7 +17,11 @@ from .local_storage import (
     save_persistent_history,
 )
 from .muaythai_metrics import analyze_muaythai_arsenal
-from .scorecard_report import batch_review_video_files, build_standalone_scorecard_html
+from .scorecard_report import (
+    batch_review_video_files,
+    build_standalone_scorecard_html,
+    extract_keyframe_previews,
+)
 from .rear_straight_review import (
     analyze_jab_and_one_two,
     apply_action_override,
@@ -437,6 +441,42 @@ def render_rear_straight_review_section(video, cached, mirror):
                     on_click=go_review,
                     args=(int(sel_act['extension_frame_index']),),
                 )
+            if st.checkbox('🔧 展开手动微调该拳的四阶段帧号（可选 · T08）', value=False, key='rs_enable_override_ui'):
+                ov_c1, ov_c2, ov_c3, ov_c4 = st.columns(4)
+                ov_start = int(ov_c1.number_input(
+                    '起手帧', min_value=cached.start, max_value=cached.end,
+                    value=int(sel_act['start_frame_index'] if sel_act['start_frame_index'] is not None else cached.start),
+                    step=1, key='rs_ov_start',
+                ))
+                ov_ext = int(ov_c2.number_input(
+                    '最大伸展帧', min_value=cached.start, max_value=cached.end,
+                    value=int(sel_act['extension_frame_index'] if sel_act['extension_frame_index'] is not None else cached.start),
+                    step=1, key='rs_ov_ext',
+                ))
+                ov_ret = int(ov_c3.number_input(
+                    '回手进入帧', min_value=cached.start, max_value=cached.end,
+                    value=int(sel_act['return_frame_index'] if sel_act['return_frame_index'] is not None else ov_ext),
+                    step=1, key='rs_ov_ret',
+                ))
+                ov_hold = int(ov_c4.number_input(
+                    '保持完成帧', min_value=cached.start, max_value=cached.end,
+                    value=int(sel_act['hold_end_frame_index'] if sel_act['hold_end_frame_index'] is not None else ov_ret),
+                    step=1, key='rs_ov_hold',
+                ))
+                ob1, ob2 = st.columns(2)
+                if ob1.button('保存并应用该拳帧号微调', key='rs_apply_override_btn'):
+                    overrides[sel_act_id] = {
+                        'start_frame_index': ov_start,
+                        'extension_frame_index': ov_ext,
+                        'return_frame_index': ov_ret,
+                        'hold_end_frame_index': ov_hold,
+                    }
+                    st.session_state.pose_rear_straight_overrides = overrides
+                    st.rerun()
+                if ob2.button('恢复该拳自动预标', key='rs_reset_override_btn'):
+                    overrides.pop(sel_act_id, None)
+                    st.session_state.pose_rear_straight_overrides = overrides
+                    st.rerun()
         else:
             st.caption('当前区间未检出后手直拳候选动作。')
 
@@ -445,6 +485,14 @@ def render_rear_straight_review_section(video, cached, mirror):
         if e_col1.button('准备完整图文复盘评分报告（离线 HTML）', key='scorecard_html_prepare'):
             vid_name = getattr(getattr(video, 'path', None), 'name', None)
             clip_label = f'{vid_name} (源帧 {cached.start}–{cached.end})' if vid_name else f'源帧 {cached.start}–{cached.end}'
+            kf_previews = extract_keyframe_previews(
+                video,
+                cached,
+                mirror=bool(mirror),
+                rear_metrics=metrics,
+                combo_res=combo_res,
+                mt_res=mt_res,
+            )
             st.session_state.pose_scorecard_html = {
                 'key': ann_key,
                 'html': build_standalone_scorecard_html(
@@ -454,6 +502,7 @@ def render_rear_straight_review_section(video, cached, mirror):
                     rear_metrics=metrics,
                     combo_res=combo_res,
                     mt_res=mt_res,
+                    keyframe_previews=kf_previews,
                 ),
             }
         saved_sc = st.session_state.get('pose_scorecard_html')
@@ -508,10 +557,13 @@ def render_rear_straight_review_section(video, cached, mirror):
         vid_path_obj = getattr(video, 'path', None)
         sibling_mp4s = []
         if vid_path_obj is not None and getattr(vid_path_obj, 'parent', None) is not None and vid_path_obj.parent.is_dir():
-            sibling_mp4s = sorted(vid_path_obj.parent.glob('*.mp4'))
+            sibling_mp4s = sorted(
+                p for p in vid_path_obj.parent.iterdir()
+                if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS
+            )
         if len(sibling_mp4s) > 1:
             if h_col2.button(
-                f'📚 一键批量复盘同目录全部 MP4（共 {len(sibling_mp4s)} 个视频）',
+                f'📚 一键批量复盘同目录全部视频（共 {len(sibling_mp4s)} 个）',
                 key='batch_folder_review_btn',
             ):
                 b_bar = st.progress(0, text='正在批量复盘同目录 MP4 视频…')

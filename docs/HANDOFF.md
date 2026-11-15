@@ -1,5 +1,20 @@
 # 项目交接
 
+## 2026年11月15日：本机完成 PC 端遗留问题全面收口（T04 扩展格式/旋转/60fps 兼容、前 400ms 出拳盲区修复、T08 界面微调闭环与报告内嵌骨架图）
+
+- **本轮交付内容**：
+  1. **T04 扩展视频格式、旋转元数据与 60fps 全面支持**（`src/boxing_coach/preview.py`、`app/main.py`、`src/boxing_coach/scorecard_report.py`）：
+     - `load_preview` 新增 `allow_extended_formats: bool = False`（默认 `False` 保持既有受限格式契约测试 100% 兼容；一键复盘、同目录切换与批量复盘启用 `True`）；
+     - 支持 `.mp4`、`.mov`、`.m4v`、`.mkv`、`.webm`、`.avi` 容器、`HEVC / H.264 / MPEG4` 编码、`60fps` 以及带 `90°/180°/270°` 容器旋转或翻转元数据的视频，自动在内存中生成正向 H.264 预览流供联动播放器使用，同时保持原片 SHA-256 校验与逐帧 PTS 精确映射。
+  2. **修复前 400ms 早期出拳盲区**（`src/boxing_coach/rear_straight_review.py`）：
+     - 移除 `segment_rear_straights` 状态机对 `timestamp_ms < reference_end_ms` 的硬性跳过，确保视频开头 `0–400ms` 内立即启动的出拳也能被完整识别。
+  3. **补全 PC 端 T08 单拳四阶段帧号手动微调界面**（`src/boxing_coach/pose_ui.py`）：
+     - 新增“🔧 展开手动微调该拳的四阶段帧号（可选 · T08）”，支持在页面直接微调 `起手帧 / 最大伸展帧 / 回手进入帧 / 保持完成帧` 并一键应用或恢复自动预标。
+  4. **离线 HTML 复盘评分报告自动内嵌关键峰值帧骨架图**（`src/boxing_coach/scorecard_report.py`）：
+     - 新增 `extract_keyframe_previews`，自动提取头号优先建议帧及代表性直拳/勾拳/泰拳腿膝峰值帧的骨架叠加 PNG（Base64 内嵌），使 `boxing-training-scorecard.html` 真正图文一体。
+- **验证结果**：
+  - 全套 **148 项 Python 单元测试**、**10 项播放器测试**、合成群体基准 CLI、3 份契约校验、`pip check` 与 `git diff --check` 全部通过。
+
 ## 2026年11月15日：本机完成全拳法（平勾拳/上勾拳/1-2-3连击）、同目录多视频一键批量复盘对比与完整图文离线 HTML 评分报告
 
 - **本轮交付内容**：

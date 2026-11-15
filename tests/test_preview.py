@@ -51,6 +51,22 @@ class PreviewTests(unittest.TestCase):
                     load_preview(path)
                 self.assertEqual(caught.exception.code, code)
 
+    def test_extended_formats_mov_rotated_and_60fps_load_cleanly(self):
+        for filename, pts_list, kwargs in [
+            ('iphone.mov', [0, 16, 33, 50], {'codec': 'libx264'}),
+            ('other.mp4', [0, 33, 67], {'codec': 'mpeg4'}),
+            ('rotated90.mp4', [0, 33, 67], {'codec': 'libx264', 'rotation': 90}),
+            ('flipped.mp4', [0, 33, 67], {'codec': 'libx264', 'horizontal_flip': True}),
+        ]:
+            with self.subTest(filename=filename):
+                path = Path(self.tmp.name) / filename
+                write_synthetic_video(path, pts_list, **kwargs)
+                vid = load_preview(path, allow_extended_formats=True)
+                self.assertEqual(vid.inspection.frame_count, len(pts_list))
+                self.assertGreater(len(vid.content), 64)
+                frame0 = read_preview_frame(vid, 0)
+                self.assertEqual(frame0.image_rgb.shape[:2], (vid.inspection.height, vid.inspection.width))
+
     def test_changed_source_rejected_before_frame_display(self):
         video = load_preview(self.path)
         self.path.write_bytes(b'invalid synthetic replacement')

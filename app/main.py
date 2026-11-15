@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import streamlit as st
 from boxing_coach.preview import load_preview, read_preview_frame, selection_times
-from boxing_coach.video_io import MediaInputError
+from boxing_coach.video_io import SUPPORTED_EXTENSIONS, MediaInputError
 from boxing_coach.synced_player import render_synced_player
 from boxing_coach.pose_ui import render_pose_panel
 
@@ -13,7 +13,8 @@ def clear_video() -> None:
     for key in ("video", "frame_index", "start_frame", "end_frame", "mirror", "view_mode",
                 "pose_run", "pose_index", "pose_reviews", "pose_review_filter",
                 "review_unrecorded_only", "pose_evidence_bundle", "pose_strike_audit",
-                "pose_rear_straight_overrides", "pose_review_annotation", "pose_local_history",
+                "pose_rear_straight_overrides", "pose_review_annotation", "pose_scorecard_html",
+                "pose_batch_table", "pose_local_history",
                 "pose_demo_frames", "pose_demo_report", "auto_run_pose"):
         st.session_state.pop(key, None)
 
@@ -51,7 +52,7 @@ if submitted_auto or submitted_open:
     clear_video()
     try:
         with st.spinner("检查完整视频与时间轴…"):
-            loaded = load_preview(path)
+            loaded = load_preview(path, allow_extended_formats=bool(submitted_auto))
             st.session_state.video = loaded
             if submitted_auto:
                 st.session_state.start_frame = 0
@@ -64,7 +65,7 @@ if submitted_auto or submitted_open:
 
 video = st.session_state.get("video")
 if video is None:
-    st.caption("支持范围：无旋转/反射元数据的 H.264 / MP4、8-bit yuv420p；单片最多 120 秒、512 MiB。支持全身及半身（肩肘腕可见）训练视频。")
+    st.caption("支持范围：H.264/HEVC MP4、MOV、M4V、MKV、WEBM（含手机竖屏旋转元数据自动摆正与 60fps）；单片最多 120 秒、512 MiB。支持全身及半身训练视频。")
     st.stop()
 
 inspection = video.inspection
@@ -74,15 +75,16 @@ top_bar1.success(f"当前视频：{video.path.name}（{inspection.width}×{inspe
 mirror = top_bar2.checkbox("拍摄时开启了镜像保存：纠正右侧画面", value=False, key="mirror")
 top_bar3.button("关闭当前视频", on_click=clear_video)
 
-# Quick switcher for sibling MP4 files in the same directory
+# Quick switcher for sibling video files in the same directory
 try:
     sibling_mp4s = sorted(
-        p for p in video.path.parent.glob("*.mp4") if p.is_file()
+        p for p in video.path.parent.iterdir()
+        if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS
     )
 except OSError:
     sibling_mp4s = []
 if len(sibling_mp4s) > 1:
-    with st.expander(f"📂 同文件夹下发现 {len(sibling_mp4s)} 个 MP4 视频（点击可一键切换并直接复盘）", expanded=False):
+    with st.expander(f"📂 同文件夹下发现 {len(sibling_mp4s)} 个训练视频（点击可一键切换并直接复盘）", expanded=False):
         sc1, sc2 = st.columns([3, 1])
         chosen_sibling = sc1.selectbox(
             "选择同目录训练视频",
@@ -94,7 +96,7 @@ if len(sibling_mp4s) > 1:
         if sc2.button("🚀 切换并直接复盘该视频", key="switch_sibling_auto_btn"):
             clear_video()
             try:
-                loaded_sib = load_preview(str(chosen_sibling))
+                loaded_sib = load_preview(str(chosen_sibling), allow_extended_formats=True)
                 st.session_state.video = loaded_sib
                 st.session_state.start_frame = 0
                 st.session_state.end_frame = _auto_clamped_end_frame(loaded_sib.inspection, 0)

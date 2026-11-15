@@ -328,7 +328,7 @@ def segment_rear_straights(
 
     while idx < n:
         feat = frame_features[idx]
-        if feat["timestamp_ms"] < reference_end_ms or feat["timestamp_ms"] < last_valid_hold_end_ms:
+        if feat["timestamp_ms"] < last_valid_hold_end_ms:
             idx += 1
             continue
 
@@ -337,14 +337,13 @@ def segment_rear_straights(
             idx += 1
             continue
 
-        # Start of excursion is the immediately preceding in-guard frame (if >= reference_end_ms and >= last_valid_hold_end_ms),
+        # Start of excursion is the immediately preceding in-guard frame (if >= last_valid_hold_end_ms),
         # otherwise the current frame where excursion is first observed.
         start_pos = idx
         if idx > 0:
             prev_feat = frame_features[idx - 1]
             if (
                 prev_feat["critical_ok"]
-                and prev_feat["timestamp_ms"] >= reference_end_ms
                 and prev_feat["timestamp_ms"] >= last_valid_hold_end_ms
             ):
                 start_pos = idx - 1
@@ -405,10 +404,7 @@ def segment_rear_straights(
         # Ensure start_pos is strictly before peak_pos if possible
         if start_pos >= peak_pos and peak_pos > 0:
             cand_start = peak_pos - 1
-            if (
-                frame_features[cand_start]["timestamp_ms"] >= reference_end_ms
-                and frame_features[cand_start]["timestamp_ms"] >= last_valid_hold_end_ms
-            ):
+            if frame_features[cand_start]["timestamp_ms"] >= last_valid_hold_end_ms:
                 start_pos = cand_start
 
         # Ignore tiny jitter that is not even a feint
