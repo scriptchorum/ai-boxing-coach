@@ -18,7 +18,7 @@ LABELS = {
     'torso_missing': '躯干关键点不足，无法可靠定位',
 }
 
-def assess_frames(run, *, tracker: SubjectTracker | bool | None = None):
+def assess_frames(run, *, tracker: SubjectTracker | bool | None = None, allow_upper_body: bool = False):
     """Return reasons per source frame without editing raw model evidence.
 
     Compare adjacent reliable torso estimates, including rejected jump frames;
@@ -55,6 +55,7 @@ def assess_frames(run, *, tracker: SubjectTracker | bool | None = None):
             if any(not can_draw(p) for p in required):
                 reasons.append('missing_points')
             torso=[points[i] for i in TORSO]
+            shoulders=[points[11], points[12]]
             current=None
             if all(can_draw(p) for p in torso):
                 allowed.extend(TORSO)
@@ -64,6 +65,24 @@ def assess_frames(run, *, tracker: SubjectTracker | bool | None = None):
                     else:
                         hidden_parts.append(name)
                 center=tuple(sum(p['image'][axis] for p in torso)/4 for axis in ('x','y'))
+                current=(frame['timestamp_ms'],center)
+                if previous is not None:
+                    dt=current[0]-previous[0]
+                    if dt <= 0 or dt > MAX_GAP_MS:
+                        reasons.append('time_gap')
+                    elif hypot(center[0]-previous[1][0],center[1]-previous[1][1])/(dt/1000) > MAX_TORSO_SPEED:
+                        reasons.append('position_jump')
+            elif allow_upper_body and all(can_draw(p) for p in shoulders):
+                allowed.extend((11, 12))
+                for p_idx in (23, 24):
+                    if can_draw(points[p_idx]):
+                        allowed.append(p_idx)
+                for name,indices in LIMBS.items():
+                    if all(can_draw(points[i]) for i in indices):
+                        allowed.extend(indices[1:])
+                    else:
+                        hidden_parts.append(name)
+                center=tuple(sum(p['image'][axis] for p in shoulders)/2 for axis in ('x','y'))
                 current=(frame['timestamp_ms'],center)
                 if previous is not None:
                     dt=current[0]-previous[0]

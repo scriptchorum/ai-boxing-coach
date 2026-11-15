@@ -11,6 +11,7 @@ from .review import FILTERS, REACQUIRED, VERDICTS, recovery_references, review_i
 from .evidence import EvidenceError, MAX_DEMO_FRAMES, build_demo_report, build_evidence_bundle
 from .local_storage import check_offline_readiness, inspect_local_storage, purge_local_caches_and_reports
 from .rear_straight_review import (
+    analyze_jab_and_one_two,
     apply_action_override,
     build_history_entry,
     compare_same_condition_history,
@@ -292,6 +293,49 @@ def render_rear_straight_review_section(video, cached, mirror):
                 on_click=go_review,
                 args=(int(top_frame),),
             )
+
+        drill = metrics.get('drill_prescription')
+        if drill:
+            st.markdown(f"**🏋️ 针对性纠错训练处方（B01）—— {drill['title']}**")
+            st.info(
+                f"**针对问题**：{drill['target_issue']}  \n"
+                f"**推荐训练量**：{drill['dosage']}  \n"
+                f"**执行要点**：{drill['steps']}  \n"
+                f"**自查口令**：{drill['cue']}"
+            )
+
+        combo_res = analyze_jab_and_one_two(
+            cached.frames,
+            rear_segmentation=seg,
+            width=width,
+            height=height,
+            stance=stance,
+            sample_id=f'run-{cached.start}-{cached.end}',
+            single_person_confirmed=single_ok,
+        )
+        st.markdown('**🥊 前手刺拳 (Jab) 与 1-2 连击协同复盘（B02）：**')
+        j1, j2, j3 = st.columns(3)
+        j1.metric('前手刺拳 (Jab)', f"{combo_res['jab_attempt_count']} 次（完整回手 {combo_res['jab_valid_count']} 次）")
+        j2.metric('前手刺拳回防评分', combo_res['jab_defense_grade'])
+        j3.metric('1-2 连击组合 (Jab→Cross)', f"{combo_res['combo_count']} 组")
+        st.caption(combo_res['combo_feedback'])
+        if combo_res['one_two_combos']:
+            st.dataframe(
+                [
+                    {
+                        '连击编号': c['combo_id'],
+                        '刺拳最大伸展帧': c['jab_extension_frame_index'],
+                        '后手最大伸展帧': c['rear_extension_frame_index'],
+                        '1-2 衔接间隔 (ms)': f"{c['combo_interval_ms']:.1f}",
+                        '刺拳回手 (ms)': f"{c['jab_return_time_ms']:.1f}" if c['jab_return_time_ms'] is not None else '-',
+                        '后手回手 (ms)': f"{c['rear_return_time_ms']:.1f}" if c['rear_return_time_ms'] is not None else '-',
+                        '双拳完整回防': '是' if c['both_returned'] else '否',
+                    }
+                    for c in combo_res['one_two_combos']
+                ],
+                hide_index=True,
+            )
+
         st.caption(metrics['limitations_notice'])
 
         act_rows = []
@@ -440,7 +484,8 @@ def render_pose_panel(video,start,end,mirror):
     st.button('清除本次关键点结果',on_click=clear_pose)
     render_review_files(cached,uploaded)
     enable_tracker = st.checkbox('试用跟踪过滤（可能隐藏正确骨架）', value=False, key='trial_tracking_filter')
-    decisions = assess_frames(cached, tracker=enable_tracker)
+    allow_upper = st.checkbox('半身/近景模式：下肢或髋部未入画时仍显示上肢骨架', value=False, key='allow_upper_body_skeleton')
+    decisions = assess_frames(cached, tracker=enable_tracker, allow_upper_body=allow_upper)
     st.info(f"分部位显示：{sum(not d['show'] for d in decisions)} 帧全部隐藏，{sum(d['show'] and bool(d['hidden_parts']) for d in decisions)} 帧仅显示部分身体，共 {len(decisions)} 帧。隐藏不表示动作错误，未隐藏也不证明识别准确。")
     st.caption('躯干定位不足、多人或位置突变时全部隐藏；否则分别检查左右手臂和腿，缺一处不再让其他部位一起消失。这是待验证规则，不能认人，也不能排除背景人物或器械误检。')
     with st.expander('查看隐藏原因统计'):

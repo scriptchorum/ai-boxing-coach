@@ -6,6 +6,7 @@ import unittest
 
 from boxing_coach.rear_straight_review import (
     REVIEW_ANNOTATION_VALIDATOR,
+    analyze_jab_and_one_two,
     apply_action_override,
     build_history_entry,
     check_participant_split_leakage,
@@ -254,8 +255,30 @@ class RearStraightReviewTests(unittest.TestCase):
         self.assertEqual(metrics["valid_count"], 5)
         self.assertEqual(metrics["defense_score"], 100)
         self.assertIn("A · 回防稳固", metrics["defense_grade"])
+        self.assertIsNotNone(metrics["drill_prescription"])
+        self.assertIn("title", metrics["drill_prescription"])
         self.assertIsNotNone(metrics["repeatability"])
         self.assertEqual(metrics["repeatability"]["median_ms"], 100.0)
+
+    def test_jab_and_one_two_combo_detection(self):
+        frames: list[dict] = [_make_frame(i, i * 50.0) for i in range(11)]
+        # Lead jab at frame 13 (650 ms), returns at 15..18, followed by rear straight at frame 17 (850 ms)
+        frames.append(_make_frame(11, 550.0))
+        frames.append(_make_frame(12, 600.0, left_elbow_x=0.44, left_wrist_x=0.34))
+        frames.append(_make_frame(13, 650.0, left_elbow_x=0.36, left_wrist_x=0.20))
+        frames.append(_make_frame(14, 700.0, left_elbow_x=0.44, left_wrist_x=0.34))
+        frames.append(_make_frame(15, 750.0))
+        frames.append(_make_frame(16, 800.0, right_elbow_x=0.50, right_wrist_x=0.60))
+        frames.append(_make_frame(17, 850.0, right_elbow_x=0.56, right_wrist_x=0.74))
+        frames.append(_make_frame(18, 900.0, right_elbow_x=0.50, right_wrist_x=0.58))
+        for k in range(19, 25):
+            frames.append(_make_frame(k, k * 50.0))
+
+        combo = analyze_jab_and_one_two(frames, stance="orthodox", sample_id="combo-test")
+        self.assertEqual(combo["jab_attempt_count"], 1)
+        self.assertEqual(combo["combo_count"], 1)
+        self.assertEqual(combo["one_two_combos"][0]["combo_interval_ms"], 200.0)
+        self.assertTrue(combo["one_two_combos"][0]["both_returned"])
 
 
 if __name__ == "__main__":

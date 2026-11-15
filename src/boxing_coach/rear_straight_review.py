@@ -240,7 +240,7 @@ def segment_rear_straights(
         if reference_start_ms <= ts_ms <= reference_end_ms:
             if scale_px is not None:
                 ref_scales.append(scale_px)
-            if offset_xy is not None:
+            if offset_xy is not None and (ext_ratio is None or ext_ratio < min_extension_ratio):
                 ref_offsets.append(offset_xy)
             if hip_mid is not None:
                 ref_hips.append(hip_mid)
@@ -279,6 +279,11 @@ def segment_rear_straights(
         if ref_offsets
         else None
     )
+    baseline_reach_px = (
+        math.hypot(baseline_offset_px[0], baseline_offset_px[1])
+        if baseline_offset_px is not None
+        else None
+    )
     baseline_hip_px = (
         (_median([h[0] for h in ref_hips]), _median([h[1] for h in ref_hips]))
         if ref_hips
@@ -298,7 +303,15 @@ def segment_rear_straights(
                 feat["offset_xy"][1] - baseline_offset_px[1],
             )
             feat["guard_dist_px"] = dist_from_guard
-            feat["in_guard"] = dist_from_guard <= guard_radius_px
+            retracted_guard_ok = (
+                baseline_reach_px is not None
+                and feat["reach_px"] is not None
+                and feat["ext_ratio"] is not None
+                and feat["reach_px"] <= baseline_reach_px + 0.55 * guard_radius_px
+                and feat["ext_ratio"] <= 0.62
+                and dist_from_guard <= guard_radius_px * 1.45
+            )
+            feat["in_guard"] = (dist_from_guard <= guard_radius_px) or retracted_guard_ok
         else:
             feat["guard_dist_px"] = None
             feat["in_guard"] = False
@@ -333,9 +346,34 @@ def segment_rear_straights(
             ):
                 start_pos = idx - 1
 
-        # Scan forward until the wrist returns into the guard region (or clip ends)
+        # Scan forward until the wrist returns into the guard region (or split at retracted valley between consecutive punches)
         excursion_end = idx
+        running_max_reach = 0.0
+        running_max_ext = 0.0
+        valley_pos: int | None = None
+        valley_reach: float | None = None
         while excursion_end < n and not frame_features[excursion_end]["in_guard"]:
+            cur_f = frame_features[excursion_end]
+            cur_r = cur_f["reach_px"]
+            cur_e = cur_f["ext_ratio"] or 0.0
+            if cur_r is not None:
+                if cur_r >= running_max_reach:
+                    running_max_reach = cur_r
+                    running_max_ext = max(running_max_ext, cur_e)
+                    valley_pos = None
+                    valley_reach = None
+                elif (
+                    running_max_ext >= feint_extension_ratio
+                    and guard_radius_px is not None
+                    and cur_r <= running_max_reach * 0.75
+                ):
+                    if valley_reach is None or cur_r <= valley_reach:
+                        valley_reach = cur_r
+                        valley_pos = excursion_end
+                    elif valley_pos is not None and cur_r >= valley_reach + 0.35 * guard_radius_px:
+                        # Arm retracted to a local valley and is now extending for a new punch
+                        excursion_end = valley_pos
+                        break
             excursion_end += 1
 
         # Find maximum visible extension frame within [idx, excursion_end - 1]
@@ -354,6 +392,7 @@ def segment_rear_straights(
         )
         peak_pos = peak_feat["pos"]
         peak_ext_ratio = peak_feat["ext_ratio"] or 0.0
+        peak_elbow_angle = peak_feat["elbow_angle_deg"] or 0.0
         peak_reach_scale_ratio = (
             (peak_feat["reach_px"] / baseline_scale_px)
             if (peak_feat["reach_px"] is not None and baseline_scale_px is not None and baseline_scale_px > 1e-3)
@@ -385,7 +424,10 @@ def segment_rear_straights(
             reasons.append("reference_scale_missing")
         if peak_pos <= start_pos:
             reasons.append("missing_start_before_extension")
-        if peak_ext_ratio < min_extension_ratio or peak_reach_scale_ratio < min_reach_scale_ratio:
+        foreshortened_full_ext = peak_elbow_angle >= 140.0 and peak_ext_ratio >= 0.78
+        if peak_ext_ratio < min_extension_ratio or (
+            peak_reach_scale_ratio < min_reach_scale_ratio and not foreshortened_full_ext
+        ):
             reasons.append("feint_or_incomplete_extension")
 
         # Locate return_pos and hold_end_pos after peak_pos
@@ -796,6 +838,7 @@ def compute_rear_straight_metrics(
         "defense_grade": coaching["defense_grade"],
         "top_priority_advice": coaching["top_priority_advice"],
         "top_priority_frame_index": coaching["top_priority_frame_index"],
+        "drill_prescription": coaching["drill_prescription"],
         "quality_reasons": report_reasons,
         "limitations_notice": (
             "本报告仅描述画面内可见关键点的回手时间（毫秒）、同场次中位数/四分位距及二维髋部投影偏移比；"
@@ -818,6 +861,7 @@ def _build_defense_score_and_top_advice(
             "defense_grade": "待开启单人确认",
             "top_priority_advice": "请勾选“确认当前片段为单人训练”，即可查看本段回防评分与最高优先建议。",
             "top_priority_frame_index": None,
+            "drill_prescription": None,
         }
 
     real_attempts = [
@@ -832,6 +876,14 @@ def _build_defense_score_and_top_advice(
                 "建议选取侧面/前斜 45°、肩肘腕清晰可见的出拳片段，或确认站架（正架/反架）是否匹配。"
             ),
             "top_priority_frame_index": action_metrics[0]["extension_frame_index"] if action_metrics else None,
+            "drill_prescription": {
+                "drill_id": "drill_camera_and_full_extension",
+                "title": "对镜慢速定格直拳 + 机位自检",
+                "target_issue": "未检出完整直拳伸展或关键点被遮挡",
+                "dosage": "2 组 × 10 次慢速定格",
+                "steps": "站在镜头正侧面或前斜 45°，确保双肩、双肘、双腕始终在画面内；慢速打出后手直拳并在最远端定格 0.5 秒后原路收回下颌。",
+                "cue": "“肩肘腕入画，打直再快收”",
+            },
         }
 
     valid_count = len(valid_return_times)
@@ -895,6 +947,14 @@ def _build_defense_score_and_top_advice(
             "建议击打到点后立即沿原路弹回下颌/腮旁，避免出拳后掉手或停留在外。"
         )
         target_frame = f_idx
+        drill = {
+            "drill_id": "drill_chin_touch_retraction",
+            "title": "后手触腮弹回定型练习（B01 纠错处方）",
+            "target_issue": "出拳后掉手或未沿原路收回护头区",
+            "dosage": "3 组 × 15 次/组（组间休 30 秒）",
+            "steps": "1. 起手前拳套轻触同侧颧骨/下颌；2. 直线打出后手直拳，想象终点是一块烫手钢板，触达瞬间立即原路拉回；3. 每次收回后必须再次物理触碰同侧腮部才算完成 1 次。",
+            "cue": "“出去一条线，收回贴腮边”",
+        }
     elif short_hold:
         first = short_hold[0]
         f_idx = first.get("return_frame_index") or first["extension_frame_index"]
@@ -903,6 +963,14 @@ def _build_defense_score_and_top_advice(
             "建议收拳归位后先稳固护头再做下一动作。"
         )
         target_frame = f_idx
+        drill = {
+            "drill_id": "drill_one_second_guard_freeze",
+            "title": "回防“一秒定格”护头强化练习（B01 纠错处方）",
+            "target_issue": "回手触达护头区后停留不足、习惯性二次掉手",
+            "dosage": "3 组 × 12 次/组（组间休 30 秒）",
+            "steps": "1. 全速打出后手直拳并迅速收回护头位；2. 拳套回到腮旁后强制静止定格满 1 秒（默数“滴-答”），检查双肘收肋、下巴微收；3. 定格稳固后再出下一拳。",
+            "cue": "“快打快收，回防定格一秒”",
+        }
     elif slow_punches:
         slowest = max(slow_punches, key=lambda m: float(m["return_time_ms"]))
         f_idx = slowest["extension_frame_index"]
@@ -911,6 +979,14 @@ def _build_defense_score_and_top_advice(
             "建议减少击打最远端的推压停留，做到“快打快收”。"
         )
         target_frame = f_idx
+        drill = {
+            "drill_id": "drill_snap_retraction_speed",
+            "title": "弹力带/空击“收比打快”鞭打练习（B01 纠错处方）",
+            "target_issue": "击打末端推拳停留、回手耗时偏长（>380ms）",
+            "dosage": "3 组 × 15 次/组（组间休 40 秒）",
+            "steps": "1. 将注意力从“往前推重拳”改为“从最远端把拳扯回来”；2. 击打到最远端瞬间手腕微紧即刻放松回抽，使回手速度体感快于出拳速度；3. 配合短促呼气“嘶—”同步收拳。",
+            "cue": "“点到即收，拉回比打出更快”",
+        }
     elif valid_return_times and ref_ms is not None:
         best_or_first = next((m for m in real_attempts if m.get("return_time_ms") is not None), real_attempts[0])
         f_idx = best_or_first["extension_frame_index"]
@@ -924,11 +1000,27 @@ def _build_defense_score_and_top_advice(
                 f"【最高优先：巩固回防并带动送髋】当前回防扎实（中位回手 {ref_ms:.0f} ms），"
                 f"但出拳时二维髋部偏移较小（约 {_median(shifts):.3f}）。可在保持快收护头的前提下，适度加强后脚蹬地转髋。"
             )
+            drill = {
+                "drill_id": "drill_rear_pivot_hip_drive",
+                "title": "后脚前脚掌旋踩送髋直拳练习（B01 纠错处方）",
+                "target_issue": "上肢回防良好但下肢与髋部协同带动偏少",
+                "dosage": "3 组 × 12 次/组（组间休 30 秒）",
+                "steps": "1. 站好实战架，出后手直拳同时后脚跟主动外旋提起（如踩灭烟头），带动后侧髋部向前送出；2. 出拳同时前手紧贴前腮护头；3. 后脚旋回原位同时后手同步弹回下颌。",
+                "cue": "“后脚蹬转送髋，收胯同步收拳”",
+            }
         else:
             advice = (
                 f"【最高优先：保持当前收手节奏】本段 {valid_count} 次有效后手直拳均完整回防并稳固保持 ≥100ms"
                 f"（参考回手时间 {ref_ms:.0f} ms），收手护头习惯良好！"
             )
+            drill = {
+                "drill_id": "drill_step_and_cross_consistency",
+                "title": "前后滑步移动中后手直拳回防巩固练习（B01 进阶处方）",
+                "target_issue": "原地后手直拳回防已达标，进阶巩固移动中护头稳定性",
+                "dosage": "3 组 × 10 次（每次含前滑步→后手直拳→回防→后撤步）",
+                "steps": "1. 前滑步半步站稳瞬间打出后手直拳；2. 确保拳套先回到下颌护头位，再启动后撤步移动；3. 全程保持回手时间稳定在 300ms 以内。",
+                "cue": "“先收拳护头，再动步撤离”",
+            }
         target_frame = f_idx
     else:
         first = real_attempts[0]
@@ -937,12 +1029,21 @@ def _build_defense_score_and_top_advice(
             f"【最高优先：改善机位与关键点可见度】动作 {first['action_id']}（源帧 {target_frame}）期间肩/肘/腕关键点存在遮挡或置信度不足，"
             "建议保持正侧面或前斜 45° 全身无遮挡拍摄。"
         )
+        drill = {
+            "drill_id": "drill_camera_and_full_extension",
+            "title": "对镜慢速定格直拳 + 机位自检（B01 纠错处方）",
+            "target_issue": "关键点遮挡或回防轨迹不完整",
+            "dosage": "2 组 × 10 次",
+            "steps": "调整镜头至正侧面或前斜 45°，确保出拳侧肩、肘、腕全程无遮挡，完成慢速出拳与原路收手。",
+            "cue": "“侧面或斜 45°，快打快收贴腮”",
+        }
 
     return {
         "defense_score": score,
         "defense_grade": grade,
         "top_priority_advice": advice,
         "top_priority_frame_index": target_frame,
+        "drill_prescription": drill,
     }
 
 
@@ -1030,4 +1131,126 @@ def compare_same_condition_history(
             f"模型（{ref.get('model_id')}）与规则版本（{ref.get('rule_version')}）完全相同的记录（共 {len(compatible)} 条）；"
             f"已隔离 {len(excluded)} 条不同条件的记录，不跨条件绘制趋势，也不将回手时间长短直接等同于技术好坏。"
         ),
+    }
+
+
+def analyze_jab_and_one_two(
+    frames: Sequence[dict[str, Any]],
+    *,
+    rear_segmentation: dict[str, Any] | None = None,
+    width: int = 1280,
+    height: int = 720,
+    stance: str = "orthodox",
+    sample_id: str = "local-sample",
+    single_person_confirmed: bool = True,
+    max_combo_gap_ms: float = 750.0,
+) -> dict[str, Any]:
+    """B02: Segment lead straight (Jab) actions and pair Jab -> Rear Straight (1-2) combinations."""
+    s_norm = stance.lower()
+    lead_stance_proxy = "southpaw" if s_norm == "orthodox" else ("orthodox" if s_norm == "southpaw" else "unknown")
+    jab_seg = segment_rear_straights(
+        frames,
+        width=width,
+        height=height,
+        stance=lead_stance_proxy,
+        sample_id=f"{sample_id}-jab",
+        min_reach_scale_ratio=0.70,
+        feint_reach_scale_ratio=0.40,
+    )
+    for act in jab_seg["actions"]:
+        act["action_kind"] = "lead_straight"
+    jab_metrics = compute_rear_straight_metrics(jab_seg, single_person_confirmed=single_person_confirmed)
+
+    rear_seg = rear_segmentation or segment_rear_straights(
+        frames,
+        width=width,
+        height=height,
+        stance=stance,
+        sample_id=sample_id,
+    )
+    rear_metrics = compute_rear_straight_metrics(rear_seg, single_person_confirmed=single_person_confirmed)
+
+    jab_Real = [
+        m for m in jab_metrics["action_metrics"]
+        if "feint_or_incomplete_extension" not in m.get("quality_reasons", [])
+    ]
+    rear_Real = [
+        m for m in rear_metrics["action_metrics"]
+        if "feint_or_incomplete_extension" not in m.get("quality_reasons", [])
+    ]
+
+    combos: list[dict[str, Any]] = []
+    used_rear_ids: set[str] = set()
+    for j_act in jab_Real:
+        j_ext_ms = j_act.get("extension_ms")
+        if j_ext_ms is None:
+            continue
+        best_rear = None
+        for r_act in rear_Real:
+            if r_act["action_id"] in used_rear_ids:
+                continue
+            r_ext_ms = r_act.get("extension_ms")
+            if r_ext_ms is None:
+                continue
+            gap_ms = float(r_ext_ms) - float(j_ext_ms)
+            if 40.0 <= gap_ms <= max_combo_gap_ms:
+                best_rear = (r_act, round(gap_ms, 1))
+                break
+        if best_rear is not None:
+            r_act, gap_ms = best_rear
+            used_rear_ids.add(r_act["action_id"])
+            combos.append(
+                {
+                    "combo_id": f"{sample_id}-12-{len(combos) + 1}",
+                    "jab_action_id": j_act["action_id"],
+                    "rear_action_id": r_act["action_id"],
+                    "jab_extension_frame_index": j_act["extension_frame_index"],
+                    "rear_extension_frame_index": r_act["extension_frame_index"],
+                    "combo_interval_ms": gap_ms,
+                    "jab_return_time_ms": j_act.get("return_time_ms"),
+                    "rear_return_time_ms": r_act.get("return_time_ms"),
+                    "both_returned": (
+                        j_act.get("return_time_ms") is not None
+                        and r_act.get("return_time_ms") is not None
+                    ),
+                }
+            )
+
+    if combos:
+        intervals = [c["combo_interval_ms"] for c in combos]
+        med_interval = round(_median(intervals), 1)
+        both_ok = sum(1 for c in combos if c["both_returned"])
+        if med_interval <= 320.0 and both_ok == len(combos):
+            combo_feedback = (
+                f"检出 {len(combos)} 组 1-2 连击，前手刺拳到后手直拳中位衔接间隔 {med_interval:.0f} ms，"
+                "连击节奏紧凑且前后手均完成回防！"
+            )
+        elif both_ok < len(combos):
+            combo_feedback = (
+                f"检出 {len(combos)} 组 1-2 连击（中位衔接 {med_interval:.0f} ms），"
+                f"其中 {len(combos) - both_ok} 组在连击过程中出现前手或后手未完整回防，注意“打二收一、打完双收”。"
+            )
+        else:
+            combo_feedback = (
+                f"检出 {len(combos)} 组 1-2 连击，中位衔接间隔 {med_interval:.0f} ms；"
+                "可在刺拳触点回抽瞬间同步启动后手转髋，进一步缩短 1-2 衔接停顿。"
+            )
+    elif jab_Real:
+        combo_feedback = (
+            f"检出前手刺拳 (Jab) {len(jab_Real)} 次（有效完整回手 {jab_metrics['valid_count']} 次），"
+            "未检出紧随刺拳（≤750ms）的 1-2 连击组合。"
+        )
+    else:
+        combo_feedback = "当前片段以单拳或后手练习为主，未检出明显的前手刺拳或 1-2 连击。"
+
+    return {
+        "jab_segmentation": jab_seg,
+        "jab_metrics": jab_metrics,
+        "jab_attempt_count": len(jab_Real),
+        "jab_valid_count": jab_metrics["valid_count"],
+        "jab_defense_grade": jab_metrics["defense_grade"],
+        "jab_defense_score": jab_metrics["defense_score"],
+        "one_two_combos": combos,
+        "combo_count": len(combos),
+        "combo_feedback": combo_feedback,
     }

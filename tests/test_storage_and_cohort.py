@@ -173,6 +173,61 @@ class StorageAndCohortTests(unittest.TestCase):
         )
         self.assertEqual(report["g2_gate_check"]["status"], "pending_real_holdout_sample")
 
+    def test_usability_study_t14_and_upper_body_quality_mode(self):
+        from types import SimpleNamespace
+        from boxing_coach.quality import assess_frames
+        from boxing_coach.usability_study import summarize_usability_study
+
+        # 1. T14 usability study aggregation
+        summary = summarize_usability_study(
+            [
+                {
+                    "participant_id": "u1",
+                    "completed_independent_task": True,
+                    "understood_limitations": True,
+                    "days_since_onboarding": 8,
+                    "reuse_type": "proactive",
+                    "issues": ["半身视频希望默认显示上肢骨架"],
+                },
+                {
+                    "participant_id": "u2",
+                    "completed_independent_task": True,
+                    "understood_limitations": True,
+                    "days_since_onboarding": 3,
+                    "reuse_type": "reminded",
+                    "issues": [],
+                },
+            ]
+        )
+        self.assertEqual(summary["total_participants_raw"], 2)
+        self.assertEqual(summary["mature_7_day_count_raw"], 1)
+        self.assertEqual(summary["immature_under_7_day_count_raw"], 1)
+        self.assertEqual(summary["proactive_reuse_count"], 1)
+        self.assertEqual(summary["reminded_reuse_count"], 0)
+        self.assertEqual(summary["g3_gate_status"], "pending_external_5_to_8_female_participants")
+
+        # 2. Half-body / upper-body mode in quality.assess_frames
+        lms = [
+            {
+                "index": i,
+                "state": "observed" if i < 23 else "missing",
+                "image": {"x": 0.5, "y": 0.4, "z": 0.0} if i < 23 else None,
+                "visibility": 0.95 if i < 23 else None,
+                "presence": 0.95 if i < 23 else None,
+            }
+            for i in range(33)
+        ]
+        fake_run = SimpleNamespace(
+            frames=[{"timestamp_ms": 0.0, "landmarks": lms}],
+            diagnostics=[{"status": "single_model_pose"}],
+        )
+        default_dec = assess_frames(fake_run, allow_upper_body=False)[0]
+        self.assertFalse(default_dec["show"])
+        upper_dec = assess_frames(fake_run, allow_upper_body=True)[0]
+        self.assertTrue(upper_dec["show"])
+        self.assertIn(15, upper_dec["allowed_indices"])
+        self.assertIn(16, upper_dec["allowed_indices"])
+
 
 if __name__ == "__main__":
     unittest.main()
