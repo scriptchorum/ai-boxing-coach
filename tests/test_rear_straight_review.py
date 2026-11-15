@@ -238,6 +238,25 @@ class RearStraightReviewTests(unittest.TestCase):
         self.assertEqual(comp["excluded_entries"][0]["mismatch_fields"], ["view"])
         self.assertEqual(comp["excluded_entries"][1]["mismatch_fields"], ["mirror"])
 
+    def test_half_body_sequence_without_hips_produces_full_scoring(self):
+        frames = _build_five_punch_sequence(stance="orthodox")
+        for f in frames:
+            for lm in f["landmarks"]:
+                if lm["index"] in (23, 24):
+                    lm["state"] = "missing"
+                    lm["image"] = None
+                    lm["visibility"] = None
+                    lm["presence"] = None
+
+        seg = segment_rear_straights(frames, stance="orthodox", sample_id="half-body-sample")
+        self.assertEqual(len(seg["actions"]), 5)
+        metrics = compute_rear_straight_metrics(seg, single_person_confirmed=True)
+        self.assertEqual(metrics["valid_count"], 5)
+        self.assertEqual(metrics["defense_score"], 100)
+        self.assertIn("A · 回防稳固", metrics["defense_grade"])
+        self.assertIsNotNone(metrics["repeatability"])
+        self.assertEqual(metrics["repeatability"]["median_ms"], 100.0)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -111,6 +111,32 @@ def _torso_scale_and_hip_px(
         if hip_w > 1e-3:
             measures.append(hip_w)
 
+    # Half-body / upper-body fallback when hips (23, 24) are outside frame or occluded:
+    if not (l_hip and r_hip):
+        if l_sh and r_sh:
+            sh_w = math.hypot(l_sh[0] - r_sh[0], l_sh[1] - r_sh[1])
+            if sh_w > 1e-3:
+                measures.append(sh_w * 1.35)
+        for sh_i, el_i, wr_i in ((LEFT_SHOULDER, LEFT_ELBOW, LEFT_WRIST), (RIGHT_SHOULDER, RIGHT_ELBOW, RIGHT_WRIST)):
+            s_pt = _observed_pixel_xy(points, sh_i, width, height, min_visibility=min_visibility, min_presence=min_presence)
+            e_pt = _observed_pixel_xy(points, el_i, width, height, min_visibility=min_visibility, min_presence=min_presence)
+            w_pt = _observed_pixel_xy(points, wr_i, width, height, min_visibility=min_visibility, min_presence=min_presence)
+            if s_pt and e_pt and w_pt:
+                arm_len = math.hypot(e_pt[0] - s_pt[0], e_pt[1] - s_pt[1]) + math.hypot(w_pt[0] - e_pt[0], w_pt[1] - e_pt[1])
+                if arm_len > 1e-3:
+                    measures.append(arm_len * 0.85)
+            elif s_pt and e_pt:
+                upper_len = math.hypot(e_pt[0] - s_pt[0], e_pt[1] - s_pt[1])
+                if upper_len > 1e-3:
+                    measures.append(upper_len * 1.65)
+        if hip_mid is None:
+            if l_sh and r_sh:
+                hip_mid = ((l_sh[0] + r_sh[0]) / 2.0, (l_sh[1] + r_sh[1]) / 2.0)
+            elif r_sh:
+                hip_mid = r_sh
+            elif l_sh:
+                hip_mid = l_sh
+
     if not measures:
         return None, hip_mid
     return max(measures), hip_mid
@@ -234,13 +260,18 @@ def segment_rear_straights(
             }
         )
 
-    # Fallback if no frames fell inside [reference_start_ms, reference_end_ms]
+    # Fallback if no frames fell inside [reference_start_ms, reference_end_ms] (e.g. sub-range start_frame > 0)
     if not ref_scales:
-        ref_scales = [f["scale_px"] for f in frame_features[:5] if f["scale_px"] is not None]
+        ref_scales = [f["scale_px"] for f in frame_features if f["scale_px"] is not None]
     if not ref_offsets:
-        ref_offsets = [f["offset_xy"] for f in frame_features[:5] if f["offset_xy"] is not None]
+        tucked = sorted(
+            [f for f in frame_features if f["offset_xy"] is not None and f["reach_px"] is not None],
+            key=lambda x: float(x["reach_px"]),
+        )
+        take_n = max(1, min(8, len(tucked) // 3 or 1))
+        ref_offsets = [f["offset_xy"] for f in tucked[:take_n]]
     if not ref_hips:
-        ref_hips = [f["hip_mid_px"] for f in frame_features[:5] if f["hip_mid_px"] is not None]
+        ref_hips = [f["hip_mid_px"] for f in frame_features[:10] if f["hip_mid_px"] is not None]
 
     baseline_scale_px = round(_median(ref_scales), 3) if ref_scales else None
     baseline_offset_px = (
@@ -655,6 +686,22 @@ def compute_rear_straight_metrics(
                 for ev in ("extension", "return", "hold_end")
             ]
             repeatability_evidence.extend(ev_items)
+        elif (
+            single_person_confirmed
+            and a["status"] == "partial"
+            and a["extension_ms"] is not None
+            and a["return_ms"] is not None
+        ):
+            ret_ms = round(float(a["return_ms"]) - float(a["extension_ms"]), 3)
+            ev_items = [
+                {
+                    "action_id": a["action_id"],
+                    "event": ev,
+                    "source_frame_index": a[f"{ev}_frame_index"],
+                    "timestamp_ms": a[f"{ev}_ms"],
+                }
+                for ev in ("extension", "return")
+            ]
         else:
             ret_ms = None
             ev_items = []
@@ -788,14 +835,21 @@ def _build_defense_score_and_top_advice(
         }
 
     valid_count = len(valid_return_times)
-    completion_ratio = valid_count / len(real_attempts)
+    partial_returned_times = [
+        float(m["return_time_ms"])
+        for m in real_attempts
+        if m.get("return_time_ms") is not None
+    ]
+    partial_return_count = max(0, len(partial_returned_times) - valid_count)
+    completion_ratio = (valid_count + 0.65 * partial_return_count) / len(real_attempts)
 
     # 1. Completion component (up to 60 points)
-    completion_pts = 60.0 * completion_ratio
+    completion_pts = 60.0 * min(1.0, completion_ratio)
 
     # 2. Return speed component (up to 30 points): <=220ms gets full 30, 550ms+ gets 8
-    if valid_return_times:
-        ref_ms = float(repeatability["median_ms"]) if repeatability else _median(valid_return_times)
+    all_observed_times = list(valid_return_times) if valid_return_times else partial_returned_times
+    if all_observed_times:
+        ref_ms = float(repeatability["median_ms"]) if repeatability else _median(all_observed_times)
         speed_factor = max(0.0, min(1.0, (550.0 - ref_ms) / (550.0 - 220.0)))
         speed_pts = 8.0 + 22.0 * speed_factor
     else:
@@ -807,7 +861,7 @@ def _build_defense_score_and_top_advice(
         iqr_ms = float(repeatability["iqr_ms"])
         consistency_factor = max(0.0, min(1.0, (180.0 - iqr_ms) / 150.0))
         consistency_pts = 10.0 * consistency_factor
-    elif valid_count > 0:
+    elif len(all_observed_times) > 0:
         consistency_pts = 7.0
     else:
         consistency_pts = 0.0

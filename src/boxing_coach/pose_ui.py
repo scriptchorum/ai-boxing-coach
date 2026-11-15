@@ -254,12 +254,29 @@ def render_rear_straight_review_section(video, cached, mirror):
 
         metrics = compute_rear_straight_metrics(seg, single_person_confirmed=single_ok)
         rep = metrics.get('repeatability')
+        observed_times = [
+            float(m['return_time_ms'])
+            for m in metrics.get('action_metrics', [])
+            if m.get('return_time_ms') is not None
+        ]
+        if rep:
+            median_label = f"{rep['median_ms']:.1f} ms"
+            iqr_label = f"{rep['iqr_ms']:.1f} ms"
+        elif observed_times:
+            sorted_t = sorted(observed_times)
+            mid = len(sorted_t) // 2
+            med_val = sorted_t[mid] if len(sorted_t) % 2 == 1 else (sorted_t[mid - 1] + sorted_t[mid]) / 2.0
+            median_label = f"{med_val:.1f} ms（{len(observed_times)} 拳）"
+            iqr_label = '需 ≥5 拳算 IQR'
+        else:
+            median_label = '暂无回手数据'
+            iqr_label = '-'
         k0, k1, k2, k3, k4 = st.columns(5)
         k0.metric('回防评分', metrics.get('defense_grade', '暂无'))
         k1.metric('候选后手直拳', f"{metrics['candidate_count']} 次")
         k2.metric('有效完整动作', f"{metrics['valid_count']} 次")
-        k3.metric('同场次中位回手时间', f"{rep['median_ms']:.1f} ms" if rep else '需 ≥5 次有效动作')
-        k4.metric('同场次四分位距 (IQR)', f"{rep['iqr_ms']:.1f} ms" if rep else '-')
+        k3.metric('同场次中位回手时间', median_label)
+        k4.metric('同场次四分位距 (IQR)', iqr_label)
 
         st.markdown('**💡 本段最高优先建议（Top 1）：**')
         score_val = metrics.get('defense_score')
