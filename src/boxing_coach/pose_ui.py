@@ -9,7 +9,14 @@ from .synced_player import render_synced_player
 from .quality import assess_frames, reason_text, display_frame, VERSION, LABELS
 from .review import FILTERS, REACQUIRED, VERDICTS, recovery_references, review_indices, neighbors, summarize_reviews, export_reviews, import_reviews, read_review_file, MAX_REVIEW_BYTES
 from .evidence import EvidenceError, MAX_DEMO_FRAMES, build_demo_report, build_evidence_bundle
-from .local_storage import check_offline_readiness, inspect_local_storage, purge_local_caches_and_reports
+from .local_storage import (
+    check_offline_readiness,
+    inspect_local_storage,
+    load_persistent_history,
+    purge_local_caches_and_reports,
+    save_persistent_history,
+)
+from .muaythai_metrics import analyze_muaythai_arsenal
 from .rear_straight_review import (
     analyze_jab_and_one_two,
     apply_action_override,
@@ -336,6 +343,49 @@ def render_rear_straight_review_section(video, cached, mirror):
                 hide_index=True,
             )
 
+        mt_res = analyze_muaythai_arsenal(
+            cached.frames,
+            stance=stance,
+            single_person_confirmed=single_ok,
+        )
+        st.markdown('**🦵 泰拳专项：高抱架、扫踢、冲膝、提膝格挡与拳腿立体连击（B03）：**')
+        m1, m2, m3, m4 = st.columns(4)
+        hg_rate = mt_res.get('high_guard_retention_rate')
+        m1.metric('泰拳高抱架保持率', f'{hg_rate * 100:.0f}%' if hg_rate is not None else '暂无')
+        m2.metric('泰式扫踢 / 冲膝', f"{mt_res['kick_count']} 腿 / {mt_res['knee_count']} 膝")
+        m3.metric('提膝格挡 (Shin Check)', f"{mt_res['shin_check_count']} 次")
+        m4.metric('拳腿/拳膝立体连击', f"{mt_res['combo_count']} 组")
+        st.caption(mt_res['muaythai_feedback'])
+        if mt_res['punch_leg_combos']:
+            st.dataframe(
+                [
+                    {
+                        '连击编号': c['combo_id'],
+                        '立体组合': c['combo_name'],
+                        '拳法峰值帧': c['punch_frame_index'],
+                        '腿膝峰值帧': c['leg_frame_index'],
+                        '拳腿转换间隔 (ms)': f"{c['transition_ms']:.1f}",
+                        '起腿高抱架保持': '是' if c['guard_kept_on_leg'] else '否',
+                    }
+                    for c in mt_res['punch_leg_combos']
+                ],
+                hide_index=True,
+            )
+        if mt_res['leg_events']:
+            st.dataframe(
+                [
+                    {
+                        '动作编号': e['event_id'],
+                        '泰拳技术': e['technique_name'],
+                        '峰值源帧': e['frame_index'],
+                        '收腿回位 (ms)': f"{e['return_time_ms']:.1f}" if e['return_time_ms'] is not None else '-',
+                        '高抱架护头': '保持' if e['guard_kept'] else '下掉',
+                    }
+                    for e in mt_res['leg_events']
+                ],
+                hide_index=True,
+            )
+
         st.caption(metrics['limitations_notice'])
 
         act_rows = []
@@ -388,18 +438,26 @@ def render_rear_straight_review_section(video, cached, mirror):
                 on_click='ignore',
             )
 
-        history = st.session_state.setdefault('pose_local_history', [])
+        if 'pose_local_history' not in st.session_state:
+            st.session_state.pose_local_history = load_persistent_history()
+        history = st.session_state.pose_local_history
         if st.button('将本次统计加入本地同条件历史对比（T11）', key='rs_save_history_btn'):
+            vid_name = getattr(getattr(video, 'path', None), 'name', None)
+            label_str = f'{vid_name} (源帧 {cached.start}–{cached.end})' if vid_name else f'源帧 {cached.start}–{cached.end}'
             entry = build_history_entry(
                 metrics,
                 entry_id=f'hist-{len(history) + 1}',
-                label=f'源帧 {cached.start}–{cached.end}',
+                label=label_str,
                 mirror=mirror,
                 view=view,
                 model_id=cached.model.get('id', 'mediapipe_pose_landmarker_lite'),
             )
             history.append(entry)
             st.session_state.pose_local_history = history
+            try:
+                save_persistent_history(history)
+            except OSError:
+                pass
 
         if history:
             comp = compare_same_condition_history(

@@ -14,7 +14,9 @@ from boxing_coach.cohort_evaluation import (
 from boxing_coach.local_storage import (
     inspect_local_storage,
     is_protected_file,
+    load_persistent_history,
     purge_local_caches_and_reports,
+    save_persistent_history,
 )
 
 
@@ -227,6 +229,18 @@ class StorageAndCohortTests(unittest.TestCase):
         self.assertTrue(upper_dec["show"])
         self.assertIn(15, upper_dec["allowed_indices"])
         self.assertIn(16, upper_dec["allowed_indices"])
+
+    def test_persistent_history_roundtrip_and_cleanup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.assertEqual(load_persistent_history(root), [])
+            entries = [{"entry_id": "hist-1", "label": "clip_a.mp4", "stance": "orthodox"}]
+            saved_path = save_persistent_history(entries, root)
+            self.assertTrue(saved_path.is_file())
+            self.assertEqual(load_persistent_history(root), entries)
+            res = purge_local_caches_and_reports(root)
+            self.assertEqual(res["deleted_files"], 1)
+            self.assertEqual(load_persistent_history(root), [])
 
 
 if __name__ == "__main__":

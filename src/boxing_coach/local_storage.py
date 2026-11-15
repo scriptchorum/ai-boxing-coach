@@ -8,12 +8,14 @@ Guarantees:
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 from boxing_coach.model_assets import AssetError, find_project_root, load_manifest, select_asset, verify_asset
 
 MANAGED_REL_DIRS = ("outputs", "runs", "work/matplotlib-cache")
+PERSISTENT_HISTORY_REL_PATH = "outputs/review_history.json"
 PROTECTED_MEDIA_SUFFIXES = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
 PROTECTED_MODEL_SUFFIXES = {".task", ".tflite", ".onnx", ".pt", ".pth", ".ckpt", ".safetensors", ".h5"}
 REMOVABLE_ARTIFACT_SUFFIXES = {".zip", ".json", ".html", ".png", ".cache", ".tmp", ".log"}
@@ -173,3 +175,33 @@ def check_offline_readiness(
         "size_bytes": asset.get("size_bytes"),
         "reason": None,
     }
+
+
+def load_persistent_history(project_root: Path | None = None) -> list[dict[str, Any]]:
+    """Load saved same-condition review history from outputs/review_history.json."""
+    root = (project_root or find_project_root()).resolve()
+    target = (root / PERSISTENT_HISTORY_REL_PATH).resolve()
+    if not _resolve_within(target, root) or not target.is_file():
+        return []
+    try:
+        data = json.loads(target.read_text(encoding="utf-8"))
+        if isinstance(data, list) and all(isinstance(item, dict) for item in data):
+            return data
+    except (OSError, ValueError, TypeError):
+        return []
+    return []
+
+
+def save_persistent_history(
+    entries: Sequence[dict[str, Any]],
+    project_root: Path | None = None,
+) -> Path:
+    """Persist same-condition review history to outputs/review_history.json."""
+    root = (project_root or find_project_root()).resolve()
+    target = (root / PERSISTENT_HISTORY_REL_PATH).resolve()
+    if not _resolve_within(target, root):
+        raise StorageSafetyError("History file path escapes project root.")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(list(entries), ensure_ascii=False, indent=2)
+    target.write_text(payload, encoding="utf-8")
+    return target
