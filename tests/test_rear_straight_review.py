@@ -153,6 +153,16 @@ class RearStraightReviewTests(unittest.TestCase):
         self.assertEqual(len(south_seg["actions"]), 5)
         self.assertTrue(all(a["status"] == "valid" for a in south_seg["actions"]))
 
+    def test_small_opening_silhouette_does_not_set_guard_for_main_subject(self):
+        frames = _build_five_punch_sequence()
+        for frame in frames[:10]:
+            for p in frame["landmarks"]:
+                for axis in ("x", "y"):
+                    p["image"][axis] = .1 + .2 * p["image"][axis]
+        seg = segment_rear_straights(frames)
+        self.assertEqual(len([a for a in seg["actions"] if a["status"] == "valid"]), 5)
+        self.assertFalse(any(f["in_guard"] for f in seg["frame_features"][:10]))
+
     def test_segment_feint_incomplete_return_and_missing_critical_points(self):
         frames = [
             _make_frame(i, i * 50.0) for i in range(10)

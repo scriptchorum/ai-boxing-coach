@@ -229,6 +229,43 @@ class MuayThaiMetricsTests(unittest.TestCase):
         self.assertEqual(res['kick_count'], 0)
         self.assertIn('半身/近景画面', res['muaythai_feedback'])
 
+    def test_step_and_switch_are_separate_from_sweeps(self):
+        for kind in ("step", "stance_switch"):
+            frames = [base_frame(i) for i in range(40)]
+            for i in range(12, 40):
+                p = frames[i]["landmarks"]
+                lift = 12 <= i < 18
+                # A high step, with a hip turn and knee/ankle travelling together in depth.
+                if lift:
+                    p[24] = point(24, .50, .54)
+                    p[26] = point(26, .50, .59)
+                    p[28] = point(28, .50, .72)
+                    for joint in (26, 28):
+                        p[joint]["image"]["z"] = -.18
+                elif kind == "step":
+                    p[28] = point(28, .65, .90)
+                else:
+                    p[28] = point(28, .44, .90)
+                    p[27] = point(27, .56, .90)
+            res = analyze_muaythai_arsenal(frames)
+            self.assertEqual(res["leg_events"], [], kind)
+            self.assertEqual([e["category"] for e in res["footwork_events"]], [kind])
+
+    def test_depth_sweep_requires_visible_support_and_relative_shin_motion(self):
+        for visible in (False, True):
+            frames = [base_frame(i) for i in range(40)]
+            for i in range(13, 23):
+                p = frames[i]["landmarks"]
+                p[24] = point(24, .51, .55)
+                p[26] = point(26, .48, .59)
+                p[28] = point(28, .49, .72)
+                p[28]["image"]["z"] = -.18
+                if visible:
+                    p[26]["image"]["z"] = -.18
+                else:
+                    p[27]["visibility"] = .1
+            self.assertEqual(analyze_muaythai_arsenal(frames)["kick_count"], 0)
+
     def test_footwork_stance_switch_and_depth_noise_do_not_trigger_roundhouse_kicks(self):
         """Stepping, stance switching, and z-depth noise while feet stay near the floor must yield 0 kicks."""
         frames = [base_frame(i) for i in range(40)]

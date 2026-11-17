@@ -11,7 +11,7 @@ import math
 from statistics import median
 from typing import Any, Sequence
 
-from .motion_windows import LEG_INTERVAL_MS, MIN_CONFIDENCE, excursions, supported_signal
+from .motion_windows import continuous, LEG_INTERVAL_MS, MIN_CONFIDENCE, excursions, supported_signal
 from .rear_straight_review import straight_events
 
 # Key landmark indices in MediaPipe Pose
@@ -241,11 +241,13 @@ def _leg_channels(points, hip, knee, ankle, support, support_ankle, aspect):
         z = point.get("z")
         return z if isinstance(z, (int, float)) and math.isfinite(z) else None
 
-    az, hz = depth(a), depth(h)
+    az, hz, kz = depth(a), depth(h), depth(k)
     return {
         "kx": (k["x"] - h["x"]) * aspect, "ky": k["y"] - h["y"],
         "ax": (a["x"] - h["x"]) * aspect, "ay": a["y"] - h["y"],
         "az": (az - hz) * aspect if az is not None and hz is not None else None,
+        "shin_z": (az - kz) * aspect if az is not None and kz is not None else None,
+        "ankle_x": a["x"] * aspect,
         "other_ay": (other_a["y"] - h["y"]) if other_a else None,
         "hip_width": (h["x"] - other["x"]) * aspect if other else None,
         "hip_tilt": h["y"] - other["y"] if other else None,
@@ -275,11 +277,16 @@ def _classify_leg(ch, start, end, scale, times, guards):
     # Require the kicking/lifted ankle to clearly leave the floor (both vs start and vs standing ankle)
     # so stepping, pivoting, stance-switching, and upward-tilt depth noise never trigger false kicks.
     ankle_lift = ay[start] - ay[foot]
-    other_ay_foot = ch["other_ay"][foot] if "other_ay" in ch else None
-    standing_clearance = (other_ay_foot - ay[foot]) if other_ay_foot is not None else ankle_lift
+    other_ay_foot = ch["other_ay"][foot]
+    standing_clearance = other_ay_foot - ay[foot] if other_ay_foot is not None else 0.0
     foot_clearly_airborne = ankle_lift >= 0.30 * scale and standing_clearance >= 0.28 * scale
 
-    depth_sweep = depth_observed and abs(ch["az"][foot] - zs[0]) >= 0.20 * scale
+    # During a step the knee and ankle can travel in depth together.
+    # A depth-only sweep also needs independent motion of the distal shin.
+    shin_z = ch["shin_z"][start:foot + 1]
+    depth_sweep = (depth_observed and None not in shin_z
+                   and abs(ch["az"][foot] - zs[0]) >= 0.20 * scale
+                   and abs(shin_z[-1] - shin_z[0]) >= 0.15 * scale)
     reaches_out = shin_x(foot) >= 0.28 * scale and shin_x(foot) - shin_x(start) >= 0.20 * scale
     if (reaches_out or depth_sweep) and foot_clearly_airborne:
         # Compare the pelvis with its own pre-lift pose. Side-on hip widths can approach zero.
@@ -326,7 +333,7 @@ def _classify_leg(ch, start, end, scale, times, guards):
 
 
 def _leg_movements(rows, times, guards):
-    keys = ("kx", "ky", "ax", "ay", "az", "other_ay", "hip_width", "hip_tilt")
+    keys = ("kx", "ky", "ax", "ay", "az", "shin_z", "other_ay", "hip_width", "hip_tilt")
     ch = {k: supported_signal([row.get(k) for row in rows], times) for k in keys}
     standing = sorted((v, i) for i, v in enumerate(ch["ay"]) if v is not None)
     if not standing:
@@ -347,6 +354,49 @@ def _leg_movements(rows, times, guards):
             if times[peak] - last_peak >= LEG_INTERVAL_MS:
                 yield kind, start, peak, end
                 last_peak = times[peak]
+
+
+def _foot_placements(left, right, times):
+    """Compare successive stable two-foot contacts in the side-view image."""
+    samples = [(a, b) for a, b in zip(left, right) if a and b]
+    if not samples:
+        return []
+    scale = median(max(a["ay"], b["ay"]) for a, b in samples)
+    if scale <= 1e-4:
+        return []
+    contacts = []
+    anchor = candidate = None
+    for i, (a, b) in enumerate(zip(left, right)):
+        if not a or not b or (i and not continuous(times, i-1, i)):
+            anchor = candidate = None
+            continue
+        spacing = a["ankle_x"] - b["ankle_x"]
+        planted = (abs(a["ay"] - a["other_ay"]) <= 0.22 * scale
+                   and min(a["ay"], b["ay"]) >= 0.72 * scale)
+        if not planted:
+            candidate = None
+            continue
+        if candidate is None or abs(spacing - candidate[1]) > 0.08 * scale:
+            candidate = (i, spacing)
+        if times[i] - times[candidate[0]] < 100:
+            continue
+        if anchor is None:
+            anchor = (i, spacing)
+            continue
+        start, original = anchor
+        if abs(spacing - original) < 0.10 * scale:
+            anchor = (i, original)
+            continue
+        if abs(spacing - original) < 0.25 * scale:
+            continue
+        moved_a = a["ankle_x"] - left[start]["ankle_x"]
+        moved_b = b["ankle_x"] - right[start]["ankle_x"]
+        crossed = (original * spacing < 0 and min(abs(original), abs(spacing)) > 0.12 * scale
+                   and moved_a * moved_b < 0 and min(abs(moved_a), abs(moved_b)) >= 0.12 * scale)
+        kind = "stance_switch" if crossed else "step"
+        contacts.append((start, candidate[0], i, kind))
+        anchor = (i, spacing)
+    return contacts
 
 
 def analyze_muaythai_arsenal(
@@ -406,12 +456,20 @@ def analyze_muaythai_arsenal(
         punch_events = straight_events(frames, stance.lower(), width=width, height=height) if single_person_confirmed else []
     leg_events = []
     shin_checks = []
+    footwork_events = []
     names = {"roundhouse_kick": "腿泰式扫踢", "teep_kick": "腿正蹬 / Stab (Teep)",
              "knee_strike": "膝撞 (冲膝)", "shin_check": "腿提膝格挡 (Shin Check)"}
     if body_framing == "full_body" and single_person_confirmed and stance.lower() in ("orthodox", "southpaw"):
+        contacts = _foot_placements(lead_rows, rear_rows, times)
+        for start, landing, end, kind in contacts:
+            footwork_events.append({"category": kind, "technique_name": "换架" if kind == "stance_switch" else "步伐",
+                                    "frame_index": frames[landing]["source_frame_index"], "timestamp_ms": times[landing],
+                                    "start_ms": times[start], "return_ms": times[end]})
         movements = [(peak, side, kind, start, end) for side, rows in (("前", lead_rows), ("后", rear_rows))
                      for kind, start, peak, end in _leg_movements(rows, times, guards)]
         for peak, side, kind, start, end in sorted(movements):
+            if any(first < peak <= landing and landing <= end for first, landing, _, _ in contacts):
+                continue
             event = {"category": kind, "technique_name": side + names[kind],
                      "frame_index": frames[peak]["source_frame_index"], "timestamp_ms": times[peak],
                      "start_ms": times[start], "return_ms": times[end]}
@@ -528,6 +586,9 @@ def analyze_muaythai_arsenal(
         'shin_check_count': check_count,
         'combo_count': combo_count,
         'leg_events': leg_events,
+        'footwork_events': footwork_events,
+        'step_count': sum(e['category'] == 'step' for e in footwork_events),
+        'stance_switch_count': sum(e['category'] == 'stance_switch' for e in footwork_events),
         'shin_checks': shin_checks,
         'punch_leg_combos': punch_leg_combos,
         'muaythai_feedback': feedback,

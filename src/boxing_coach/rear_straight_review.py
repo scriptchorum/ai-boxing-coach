@@ -18,7 +18,7 @@ from boxing_coach.model_assets import find_project_root
 
 from boxing_coach.motion_windows import ARM_INTERVAL_MS, MIN_CONFIDENCE, continuous, excursions, supported_signal
 
-RULE_VERSION = "rear-straight-0.2.0"
+RULE_VERSION = "rear-straight-0.3.0"
 APP_VERSION = "local-review-0.1.0"
 EVENTS = ("start", "extension", "return", "hold_end")
 
@@ -239,20 +239,15 @@ def segment_rear_straights(
                 cos_val = max(-1.0, min(1.0, (v1[0] * v2[0] + v1[1] * v2[1]) / (upper_px * fore_px)))
                 elbow_angle_deg = math.degrees(math.acos(cos_val))
 
-        if reference_start_ms <= ts_ms <= reference_end_ms:
-            if scale_px is not None:
-                ref_scales.append(scale_px)
-            if offset_xy is not None and (ext_ratio is None or ext_ratio < min_extension_ratio):
-                ref_offsets.append(offset_xy)
-            if hip_mid is not None:
-                ref_hips.append(hip_mid)
-
         frame_features.append(
             {
                 "pos": pos,
                 "source_frame_index": src_idx,
                 "timestamp_ms": ts_ms,
                 "scale_px": scale_px,
+                "torso_observed": all(_observed_pixel_xy(pts, k, width, height,
+                                      min_visibility=min_visibility, min_presence=min_presence) is not None
+                                      for k in (11, 12, 23, 24)),
                 "hip_mid_px": hip_mid,
                 "sh_xy": sh_xy,
                 "el_xy": el_xy,
@@ -265,16 +260,29 @@ def segment_rear_straights(
             }
         )
 
-    # Fallback if no frames fell inside [reference_start_ms, reference_end_ms] (e.g. sub-range start_frame > 0)
-    if not ref_scales:
-        ref_scales = [f["scale_px"] for f in frame_features if f["scale_px"] is not None]
+    # The opening frames can show a different scale (entry, occlusion or another
+    # silhouette). Use a reference from the predominant observed torso scale.
+    scales = [f["scale_px"] for f in frame_features if f["torso_observed"] and f["scale_px"]]
+    if frame_features:
+        typical = _median(scales) if scales else None
+        usable = []
+        for f in frame_features:
+            if f["scale_px"] and (typical is None or 0.55 * typical <= f["scale_px"] <= 1.8 * typical):
+                usable.append(f)
+            else:
+                f.update(critical_ok=False, offset_xy=None, reach_px=None, ext_ratio=None)
+        reference = [f for f in usable if reference_start_ms <= f["timestamp_ms"] <= reference_end_ms]
+        ref_scales = [f["scale_px"] for f in reference or usable if f["scale_px"]]
+        ref_hips = [f["hip_mid_px"] for f in reference or usable if f["hip_mid_px"] is not None]
+        tucked = [f for f in usable if f["critical_ok"] and f["ext_ratio"] is not None
+                  and f["ext_ratio"] < min_extension_ratio and f["wr_xy"][1] < f["el_xy"][1]]
+        first_guard = [f for f in tucked if reference_start_ms <= f["timestamp_ms"] <= reference_end_ms]
+        ref_offsets = [f["offset_xy"] for f in first_guard or tucked]
+
     if not ref_offsets:
-        tucked = sorted(
-            [f for f in frame_features if f["offset_xy"] is not None and f["reach_px"] is not None],
-            key=lambda x: float(x["reach_px"]),
-        )
-        take_n = max(1, min(8, len(tucked) // 3 or 1))
-        ref_offsets = [f["offset_xy"] for f in tucked[:take_n]]
+        tucked = sorted((f for f in frame_features if f["offset_xy"] is not None),
+                        key=lambda f: f["reach_px"])
+        ref_offsets = [f["offset_xy"] for f in tucked[:max(1, len(tucked) // 4)]]
     if not ref_hips:
         ref_hips = [f["hip_mid_px"] for f in frame_features[:10] if f["hip_mid_px"] is not None]
 

@@ -73,6 +73,8 @@ def summarize_frames_for_batch(
             if hist_entry.get("median_return_time_ms") is not None
             else "-"
         ),
+        "已识别出拳": len(combo_res["straight_events"]) + len(combo_res["bent_arm_punches"]),
+        "步伐 / 换架": f"{mt_res['step_count']} / {mt_res['stance_switch_count']}",
         "刺拳 / 平勾 / 上勾": (
             f"{combo_res['jab_attempt_count']} / {combo_res['hook_count']} / {combo_res['uppercut_count']}"
         ),
@@ -354,6 +356,7 @@ def build_standalone_scorecard_html(
   <div class="card">
     <h2>二、全拳法统计：刺拳、平勾拳、上勾拳与 1-2 / 1-2-3 连击（B02）</h2>
     <div class="grid">
+      <div class="metric"><div class="label">所选区间已识别的出拳</div><div class="value">{len(combo_res['straight_events']) + len(combo_res['bent_arm_punches']) if 'straight_events' in combo_res and 'bent_arm_punches' in combo_res else '—'} 次</div></div>
       <div class="metric"><div class="label">前手刺拳 (Jab)</div><div class="value">{combo_res['jab_attempt_count']} 次（完整 {combo_res['jab_valid_count']}）</div></div>
       <div class="metric"><div class="label">前手刺拳回防评分</div><div class="value">{esc(str(combo_res['jab_defense_grade']))}</div></div>
       <div class="metric"><div class="label">平勾拳 / 上勾拳</div><div class="value">{combo_res.get('hook_count', 0)} 次 / {combo_res.get('uppercut_count', 0)} 次</div></div>
@@ -369,6 +372,7 @@ def build_standalone_scorecard_html(
   <div class="card">
     <h2>三、泰拳专项：高抱架、扫踢、正蹬、冲膝、提膝格挡与拳腿立体连击（B03）</h2>
     <div class="grid">
+      <div class="metric"><div class="label">步伐 / 换架</div><div class="value">{mt_res.get('step_count', '—')} / {mt_res.get('stance_switch_count', '—')}</div></div>
       <div class="metric"><div class="label">正蹬 / Stab (Teep)</div><div class="value">{str(mt_res['teep_count']) + ' 次' if 'teep_count' in mt_res else '旧报告未统计'}</div></div>
       <div class="metric"><div class="label">泰式扫踢 (Roundhouse)</div><div class="value">{mt_res['kick_count']} 次</div></div>
       <div class="metric"><div class="label">泰拳冲膝 (Knee Strike)</div><div class="value">{mt_res['knee_count']} 次</div></div>

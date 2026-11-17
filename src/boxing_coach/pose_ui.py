@@ -328,6 +328,15 @@ def render_rear_straight_review_section(video, cached, mirror):
             single_person_confirmed=single_ok,
         )
         st.markdown('**🥊 全拳法协同复盘：刺拳 (Jab)、平勾 (Hook)、上勾 (Uppercut) 与 1-2 / 1-2-3 连击（B02）：**')
+        punches = sorted(combo_res["straight_events"] + combo_res["bent_arm_punches"],
+                         key=lambda event: event["timestamp_ms"])
+        st.metric("所选区间已识别的出拳", f"{len(punches)} 次")
+        st.caption("每个已回落的直拳或弯臂拳计一次。连击组共用这些拳。遮挡和未回落的动作可能漏计。")
+        if punches:
+            with st.expander("核对每一拳的时间"):
+                st.dataframe([{"时间 (秒)": round(e["timestamp_ms"]/1000, 2),
+                               "源帧": e["frame_index"], "拳法": e["punch_type"]} for e in punches],
+                             hide_index=True)
         j1, j2, j3, j4 = st.columns(4)
         j1.metric('前手刺拳 (Jab)', f"{combo_res['jab_attempt_count']} 次（完整回手 {combo_res['jab_valid_count']} 次）")
         j2.metric('前手刺拳回防评分', combo_res['jab_defense_grade'])
@@ -383,6 +392,14 @@ def render_rear_straight_review_section(video, cached, mirror):
         knee.metric('冲膝', f"{mt_res['knee_count']} 次")
         m3.metric('提膝格挡 (Shin Check)', f"{mt_res['shin_check_count']} 次")
         m4.metric('拳腿/拳膝立体连击', f"{mt_res['combo_count']} 组")
+        step, switch = st.columns(2)
+        step.metric("步伐（落脚位置变化）", f"{mt_res['step_count']} 次")
+        switch.metric("换架（双脚前后互换）", f"{mt_res['stance_switch_count']} 次")
+        if mt_res["footwork_events"]:
+            with st.expander("核对步伐与换架的时间"):
+                st.dataframe([{"时间 (秒)": round(e["timestamp_ms"]/1000, 2),
+                               "源帧": e["frame_index"], "类型": e["technique_name"]}
+                              for e in mt_res["footwork_events"]], hide_index=True)
         st.caption(mt_res['muaythai_feedback'])
         if mt_res['punch_leg_combos']:
             st.dataframe(
