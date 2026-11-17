@@ -230,11 +230,11 @@ def _reliable_landmark(point):
                     for key in ("visibility", "presence")))
 
 
-def _leg_channels(points, hip, knee, ankle, support, aspect):
+def _leg_channels(points, hip, knee, ankle, support, support_ankle, aspect):
     def image(index):
         return points[index]["image"] if index in points else None
 
-    h, k, a, other = map(image, (hip, knee, ankle, support))
+    h, k, a, other, other_a = map(image, (hip, knee, ankle, support, support_ankle))
     if not all((h, k, a)):
         return {}
     def depth(point):
@@ -246,6 +246,7 @@ def _leg_channels(points, hip, knee, ankle, support, aspect):
         "kx": (k["x"] - h["x"]) * aspect, "ky": k["y"] - h["y"],
         "ax": (a["x"] - h["x"]) * aspect, "ay": a["y"] - h["y"],
         "az": (az - hz) * aspect if az is not None and hz is not None else None,
+        "other_ay": (other_a["y"] - h["y"]) if other_a else None,
         "hip_width": (h["x"] - other["x"]) * aspect if other else None,
         "hip_tilt": h["y"] - other["y"] if other else None,
     }
@@ -268,11 +269,19 @@ def _classify_leg(ch, start, end, scale, times, guards):
     foot = max(moving, key=foot_excursion)
     knee = min(moving, key=ky.__getitem__)
     knee_rise = ky[start] - ky[knee]
-    if knee_rise < 0.14 * scale:
+    # Footwork steps and stance switches keep knees low; require real knee lift (>= 22% of leg length).
+    if knee_rise < 0.22 * scale:
         return None
+    # Require the kicking/lifted ankle to clearly leave the floor (both vs start and vs standing ankle)
+    # so stepping, pivoting, stance-switching, and upward-tilt depth noise never trigger false kicks.
+    ankle_lift = ay[start] - ay[foot]
+    other_ay_foot = ch["other_ay"][foot] if "other_ay" in ch else None
+    standing_clearance = (other_ay_foot - ay[foot]) if other_ay_foot is not None else ankle_lift
+    foot_clearly_airborne = ankle_lift >= 0.30 * scale and standing_clearance >= 0.28 * scale
+
     depth_sweep = depth_observed and abs(ch["az"][foot] - zs[0]) >= 0.20 * scale
     reaches_out = shin_x(foot) >= 0.28 * scale and shin_x(foot) - shin_x(start) >= 0.20 * scale
-    if reaches_out or depth_sweep:
+    if (reaches_out or depth_sweep) and foot_clearly_airborne:
         # Compare the pelvis with its own pre-lift pose. Side-on hip widths can approach zero.
         hip_windows = [ch[key][start:foot + 1] for key in ("hip_width", "hip_tilt")]
         if any(None in values for values in hip_windows):
@@ -281,7 +290,7 @@ def _classify_leg(ch, start, end, scale, times, guards):
         if turn >= 0.12 and depth_sweep:
             return "roundhouse_kick", foot
         chamber = next((i for i in range(start + 1, foot)
-                        if ky[start] - ky[i] >= 0.14 * scale and shin_x(i) < 0.20 * scale), None)
+                        if ky[start] - ky[i] >= 0.18 * scale and shin_x(i) < 0.20 * scale), None)
         origin = chamber if chamber is not None else start
         dx, dy = ax[foot] - ax[origin], ay[foot] - ay[origin]
         chord = math.hypot(dx, dy)
@@ -303,6 +312,10 @@ def _classify_leg(ch, start, end, scale, times, guards):
             return "teep_kick", foot
         return None
 
+    other_ay_knee = ch["other_ay"][knee] if "other_ay" in ch else None
+    knee_ankle_clearance = (other_ay_knee - ay[knee]) if other_ay_knee is not None else (ay[start] - ay[knee])
+    if knee_ankle_clearance < 0.20 * scale:
+        return None
     knee_drive = abs(kx[knee] - kx[start]) / scale
     if knee_drive >= 0.17 and knee_rise >= 0.22 * scale:
         return "knee_strike", knee
@@ -313,7 +326,7 @@ def _classify_leg(ch, start, end, scale, times, guards):
 
 
 def _leg_movements(rows, times, guards):
-    keys = ("kx", "ky", "ax", "ay", "az", "hip_width", "hip_tilt")
+    keys = ("kx", "ky", "ax", "ay", "az", "other_ay", "hip_width", "hip_tilt")
     ch = {k: supported_signal([row.get(k) for row in rows], times) for k in keys}
     standing = sorted((v, i) for i, v in enumerate(ch["ay"]) if v is not None)
     if not standing:
@@ -372,8 +385,8 @@ def analyze_muaythai_arsenal(
         if hg["status"] == "observed":
             upper_observed_frames += 1
             high_guard_frames += int(hg["high_guard_active"])
-        lead_rows.append(_leg_channels(pts, lead_hip_idx, lead_knee_idx, lead_ankle_idx, rear_hip_idx, width / height))
-        rear_rows.append(_leg_channels(pts, rear_hip_idx, rear_knee_idx, rear_ankle_idx, lead_hip_idx, width / height))
+        lead_rows.append(_leg_channels(pts, lead_hip_idx, lead_knee_idx, lead_ankle_idx, rear_hip_idx, rear_ankle_idx, width / height))
+        rear_rows.append(_leg_channels(pts, rear_hip_idx, rear_knee_idx, rear_ankle_idx, lead_hip_idx, lead_ankle_idx, width / height))
         lower_observed_frames += int(bool(lead_rows[-1] or rear_rows[-1]))
 
     total_frames = len(frames)

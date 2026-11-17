@@ -229,6 +229,26 @@ class MuayThaiMetricsTests(unittest.TestCase):
         self.assertEqual(res['kick_count'], 0)
         self.assertIn('半身/近景画面', res['muaythai_feedback'])
 
+    def test_footwork_stance_switch_and_depth_noise_do_not_trigger_roundhouse_kicks(self):
+        """Stepping, stance switching, and z-depth noise while feet stay near the floor must yield 0 kicks."""
+        frames = [base_frame(i) for i in range(40)]
+        for i in range(12, 26):
+            p = frames[i]['landmarks']
+            # Simulate a stance switch / pivot step: hips rotate, knees bend slightly, ankles slide on floor + z noise
+            step = 0.08 if i < 20 else 0.0
+            tilt_y = -0.025
+            p[23] = point(23, 0.48, 0.56 + tilt_y)
+            p[24] = point(24, 0.52, 0.55 + tilt_y)
+            p[25] = point(25, 0.42 - step, 0.69 + tilt_y)
+            p[26] = point(26, 0.58 + step, 0.68 + tilt_y)
+            p[27] = point(27, 0.36 - step * 1.4, 0.87 + tilt_y)
+            p[28] = point(28, 0.64 + step * 1.4, 0.86 + tilt_y)
+            p[28]['image']['z'] = -0.22
+        res = analyze_muaythai_arsenal(frames, stance='orthodox', single_person_confirmed=True)
+        self.assertEqual(res['kick_count'], 0)
+        self.assertEqual(res['teep_count'], 0)
+        self.assertEqual(res['knee_count'], 0)
+
 
 if __name__ == '__main__':
     unittest.main()
