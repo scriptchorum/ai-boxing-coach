@@ -1177,11 +1177,11 @@ def _detect_bent_arm_punches(
     smooth = supported_signal(distances, times)
     detected = []
     last_peak = -math.inf
-    segmentation_signal = [m if d is not None and d <= 0.30 and m is not None and m > 0.44 else d
+    segmentation_signal = [m if d is not None and d <= 0.32 and m is not None and m > 0.52 else d
                            for d, m in zip(distances, smooth)]
-    for start, _, end in excursions(segmentation_signal, times, 0.30, 0.40):
+    for start, _, end in excursions(segmentation_signal, times, 0.32, 0.48):
         i = max(range(start + 1, end), key=distances.__getitem__)
-        if ((smooth[i] or 0) - max(distances[start], distances[end]) < 0.25
+        if ((smooth[i] or 0) - max(distances[start], distances[end]) < 0.34
                 or times[i] - last_peak < ARM_INTERVAL_MS):
             continue
         if any((times[start + 1] <= act["return_ms"] and times[end - 1] >= act["start_ms"])
@@ -1191,10 +1191,15 @@ def _detect_bent_arm_punches(
         src_idx = f["source_frame_index"]
         sh_xy, el_xy, wr_xy = f["sh_xy"], f["el_xy"], f["wr_xy"]
         elbow_ang = f["elbow_angle_deg"]
-        if elbow_ang is None or not 45 <= elbow_ang <= 135 or f["ext_ratio"] >= 0.85:
+        if (
+            elbow_ang is None
+            or f["ext_ratio"] is None
+            or not 45 <= elbow_ang <= 135
+            or not 0.55 <= f["ext_ratio"] < 0.82
+        ):
             continue
         elapsed = (times[i] - times[start]) / 1000
-        if (distances[i] - distances[start]) / elapsed < 1.5:
+        if elapsed < 0.04 or (distances[i] - distances[start]) / elapsed < 1.8:
             continue
         scale_px = scale
         # Distinguish Hook (elbow raised near shoulder level) vs Uppercut (elbow dipped below shoulder & wrist rises)
@@ -1330,8 +1335,42 @@ def analyze_jab_and_one_two(
     else:
         combo_feedback = "当前片段以单拳或后手练习为主，未检出明显的前手刺拳或 1-2 连击。"
 
-    lead_bent = _detect_bent_arm_punches(jab_seg, hand_label="前手", straights=jab_actions) if single_person_confirmed else []
-    rear_bent = _detect_bent_arm_punches(rear_seg, hand_label="后手", straights=rear_actions) if single_person_confirmed else []
+    def _straight_exclusions(seg_dict: dict[str, Any], completed: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+        feat_by_idx = {int(f["source_frame_index"]): f for f in seg_dict.get("frame_features", [])}
+        exclusions = list(completed)
+        seen_ids = {a.get("action_id") for a in completed}
+        for act in seg_dict.get("actions", []):
+            if act.get("action_id") in seen_ids:
+                continue
+            peak_idx = act.get("extension_frame_index")
+            peak_f = feat_by_idx.get(int(peak_idx)) if peak_idx is not None else None
+            if peak_f is not None and (peak_f.get("ext_ratio") or 0.0) >= 0.78 and act.get("extension_ms") is not None:
+                exclusions.append({
+                    "action_id": act.get("action_id"),
+                    "start_ms": float(act.get("start_ms") or act["extension_ms"]),
+                    "extension_ms": float(act["extension_ms"]),
+                    "return_ms": float(act.get("return_ms") or act.get("hold_end_ms") or act["extension_ms"] + 120.0),
+                })
+        return exclusions
+
+    lead_bent = (
+        _detect_bent_arm_punches(
+            jab_seg,
+            hand_label="前手",
+            straights=_straight_exclusions(jab_seg, jab_actions),
+        )
+        if single_person_confirmed
+        else []
+    )
+    rear_bent = (
+        _detect_bent_arm_punches(
+            rear_seg,
+            hand_label="后手",
+            straights=_straight_exclusions(rear_seg, rear_actions),
+        )
+        if single_person_confirmed
+        else []
+    )
     bent_punches = sorted(lead_bent + rear_bent, key=lambda p: int(p["frame_index"]))
     hook_count = sum(1 for p in bent_punches if p["punch_kind"].endswith("_hook"))
     uppercut_count = sum(1 for p in bent_punches if p["punch_kind"].endswith("_uppercut"))
