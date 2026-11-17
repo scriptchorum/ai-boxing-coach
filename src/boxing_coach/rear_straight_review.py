@@ -16,7 +16,9 @@ from jsonschema import Draft202012Validator
 
 from boxing_coach.model_assets import find_project_root
 
-RULE_VERSION = "rear-straight-0.1.0"
+from boxing_coach.motion_windows import ARM_INTERVAL_MS, MIN_CONFIDENCE, continuous, excursions, supported_signal
+
+RULE_VERSION = "rear-straight-0.2.0"
 APP_VERSION = "local-review-0.1.0"
 EVENTS = ("start", "extension", "return", "hold_end")
 
@@ -191,8 +193,8 @@ def segment_rear_straights(
     feint_extension_ratio: float = 0.50,
     min_reach_scale_ratio: float = 0.85,
     feint_reach_scale_ratio: float = 0.45,
-    min_visibility: float = 0.5,
-    min_presence: float = 0.5,
+    min_visibility: float = MIN_CONFIDENCE,
+    min_presence: float = MIN_CONFIDENCE,
 ) -> dict[str, Any]:
     """T09: Segment rear straight punches using pixel-restored coordinates and decoded PTS."""
     if width <= 0 or height <= 0:
@@ -326,6 +328,15 @@ def segment_rear_straights(
     action_seq = 0
     last_valid_hold_end_ms = -1.0
 
+    times = [f["timestamp_ms"] for f in frame_features]
+    supported = supported_signal([f["guard_dist_px"] for f in frame_features], times)
+    # A one-sample snap to guard during a sustained extension is not a return.
+    if guard_radius_px is not None:
+        for pos, feat in enumerate(frame_features):
+            if feat["in_guard"] and supported[pos] is not None and supported[pos] > guard_radius_px * 1.45:
+                feat["in_guard"] = False
+    last_peak_ms = -math.inf
+
     while idx < n:
         feat = frame_features[idx]
         if feat["timestamp_ms"] < last_valid_hold_end_ms:
@@ -348,34 +359,13 @@ def segment_rear_straights(
             ):
                 start_pos = idx - 1
 
-        # Scan forward until the wrist returns into the guard region (or split at retracted valley between consecutive punches)
+        # A missing landmark or discontinuous PTS cannot establish a return.
         excursion_end = idx
-        running_max_reach = 0.0
-        running_max_ext = 0.0
-        valley_pos: int | None = None
-        valley_reach: float | None = None
-        while excursion_end < n and not frame_features[excursion_end]["in_guard"]:
-            cur_f = frame_features[excursion_end]
-            cur_r = cur_f["reach_px"]
-            cur_e = cur_f["ext_ratio"] or 0.0
-            if cur_r is not None:
-                if cur_r >= running_max_reach:
-                    running_max_reach = cur_r
-                    running_max_ext = max(running_max_ext, cur_e)
-                    valley_pos = None
-                    valley_reach = None
-                elif (
-                    running_max_ext >= feint_extension_ratio
-                    and guard_radius_px is not None
-                    and cur_r <= running_max_reach * 0.75
-                ):
-                    if valley_reach is None or cur_r <= valley_reach:
-                        valley_reach = cur_r
-                        valley_pos = excursion_end
-                    elif valley_pos is not None and cur_r >= valley_reach + 0.35 * guard_radius_px:
-                        # Arm retracted to a local valley and is now extending for a new punch
-                        excursion_end = valley_pos
-                        break
+        while excursion_end < n:
+            current = frame_features[excursion_end]
+            if (current["in_guard"] or not current["critical_ok"] or
+                    (excursion_end > idx and not continuous(times, excursion_end - 1, excursion_end))):
+                break
             excursion_end += 1
 
         # Find maximum visible extension frame within [idx, excursion_end - 1]
@@ -433,23 +423,39 @@ def segment_rear_straights(
         return_feat: dict[str, Any] | None = None
         hold_end_feat: dict[str, Any] | None = None
 
-        if excursion_end < n and frame_features[excursion_end]["in_guard"]:
+        if excursion_end < n and continuous(times, excursion_end - 1, excursion_end) and frame_features[excursion_end]["in_guard"]:
             return_feat = frame_features[excursion_end]
             # Verify continuous hold in guard region for >= return_hold_ms
             hold_cursor = excursion_end
             while hold_cursor < n and frame_features[hold_cursor]["in_guard"]:
+                if hold_cursor > excursion_end and not continuous(times, hold_cursor - 1, hold_cursor):
+                    break
                 if frame_features[hold_cursor]["timestamp_ms"] - return_feat["timestamp_ms"] >= return_hold_ms - 1e-9:
                     hold_end_feat = frame_features[hold_cursor]
                     break
                 hold_cursor += 1
             if hold_end_feat is None:
                 reasons.append("insufficient_return_hold")
-                next_idx = hold_cursor + 1
+                next_idx = hold_cursor
             else:
                 next_idx = hold_end_feat["pos"] + 1
         else:
             reasons.append("missing_return")
             next_idx = excursion_end + 1
+
+        if return_feat is not None and baseline_scale_px:
+            floor = max(start_feat["guard_dist_px"] or 0, return_feat["guard_dist_px"])
+            if (not start_feat["in_guard"] or not continuous(times, start_pos, idx)
+                    or (supported[peak_pos] or 0) - floor < 0.28 * baseline_scale_px
+                    or peak_feat["guard_dist_px"] - floor < 0.40 * baseline_scale_px
+                    or peak_elbow_angle < 138):
+                if "feint_or_incomplete_extension" not in reasons:
+                    reasons.append("feint_or_incomplete_extension")
+            if not any(r != "insufficient_return_hold" for r in reasons):
+                if times[peak_pos] - last_peak_ms < ARM_INTERVAL_MS:
+                    idx = max(next_idx, idx + 1)
+                    continue
+                last_peak_ms = times[peak_pos]
 
         for ev_feat in (start_feat, peak_feat, return_feat, hold_end_feat):
             if ev_feat is not None and not ev_feat["critical_ok"]:
@@ -828,6 +834,7 @@ def compute_rear_straight_metrics(
         "status": report_status,
         "single_person_confirmed": bool(single_person_confirmed),
         "candidate_count": candidate_count,
+        "completed_count": len(completed_straights(action_metrics)),
         "valid_count": valid_count,
         "usable_ratio": round(usable_ratio, 4) if usable_ratio is not None else None,
         "metric_config": dict(segmentation["metric_config"]),
@@ -1133,60 +1140,63 @@ def compare_same_condition_history(
     }
 
 
+def completed_straights(actions):
+    """Counting requires an observed return. The extra hold is used for timing metrics."""
+    return [a for a in actions if a["return_ms"] is not None and a["status"] != "rejected"
+            and all(reason == "insufficient_return_hold" for reason in a["quality_reasons"])]
+
+
+def straight_events(frames, stance, *, width=1280, height=720):
+    """The same completed straight intervals used for auditing and punch/leg pairing."""
+    events = []
+    opposite = {"orthodox": "southpaw", "southpaw": "orthodox"}.get(stance, "unknown")
+    for side, proxy in (("lead", opposite), ("rear", stance)):
+        seg = segment_rear_straights(frames, width=width, height=height, stance=proxy,
+                                     min_reach_scale_ratio=0.70 if side == "lead" else 0.85)
+        features = {f["source_frame_index"]: f for f in seg["frame_features"]}
+        for action in completed_straights(seg["actions"]):
+            peak = features[action["extension_frame_index"]]
+            events.append({"side": side, "pos": peak["pos"], "timestamp_ms": peak["timestamp_ms"],
+                           "frame_index": peak["source_frame_index"], "extension_ratio": peak["ext_ratio"],
+                           "punch_type": "前手刺拳" if side == "lead" else "后手直拳"})
+    return sorted(events, key=lambda e: e["timestamp_ms"])
+
+
 def _detect_bent_arm_punches(
     seg_dict: dict[str, Any],
     *,
     hand_label: str,
-    straight_frames: set[int],
+    straights: Sequence[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Detect Hook (平勾拳) and Uppercut (上勾拳) from flexed-elbow arm kinematics."""
     feats = seg_dict.get("frame_features", [])
-    scale_px = seg_dict.get("metric_config", {}).get("scale_px")
-    if not feats or scale_px is None or scale_px <= 1e-3:
+    scale = seg_dict.get("metric_config", {}).get("scale_px")
+    if not scale:
         return []
-
-    detected: list[dict[str, Any]] = []
-    last_pos = -5
-    n = len(feats)
-    for i in range(1, n - 1):
+    times = [f["timestamp_ms"] for f in feats]
+    distances = [f["guard_dist_px"] / scale if f["guard_dist_px"] is not None else None for f in feats]
+    smooth = supported_signal(distances, times)
+    detected = []
+    last_peak = -math.inf
+    segmentation_signal = [m if d is not None and d <= 0.30 and m is not None and m > 0.44 else d
+                           for d, m in zip(distances, smooth)]
+    for start, _, end in excursions(segmentation_signal, times, 0.30, 0.40):
+        i = max(range(start + 1, end), key=distances.__getitem__)
+        if ((smooth[i] or 0) - max(distances[start], distances[end]) < 0.25
+                or times[i] - last_peak < ARM_INTERVAL_MS):
+            continue
+        if any((times[start + 1] <= act["return_ms"] and times[end - 1] >= act["start_ms"])
+               or abs(times[i] - act["extension_ms"]) < ARM_INTERVAL_MS for act in straights):
+            continue
         f = feats[i]
-        src_idx = int(f["source_frame_index"])
-        if any(abs(src_idx - sf) <= 3 for sf in straight_frames):
+        src_idx = f["source_frame_index"]
+        sh_xy, el_xy, wr_xy = f["sh_xy"], f["el_xy"], f["wr_xy"]
+        elbow_ang = f["elbow_angle_deg"]
+        if elbow_ang is None or not 45 <= elbow_ang <= 135 or f["ext_ratio"] >= 0.85:
             continue
-        if i - last_pos < 4 or not f.get("critical_ok"):
+        elapsed = (times[i] - times[start]) / 1000
+        if (distances[i] - distances[start]) / elapsed < 1.5:
             continue
-        sh_xy = f.get("sh_xy")
-        el_xy = f.get("el_xy")
-        wr_xy = f.get("wr_xy")
-        reach_px = f.get("reach_px")
-        ext_ratio = f.get("ext_ratio")
-        elbow_ang = f.get("elbow_angle_deg")
-        if (
-            sh_xy is None
-            or el_xy is None
-            or wr_xy is None
-            or reach_px is None
-            or ext_ratio is None
-            or elbow_ang is None
-        ):
-            continue
-
-        arm_reach_px = math.hypot(wr_xy[0] - sh_xy[0], wr_xy[1] - sh_xy[1])
-        guard_disp_px = float(f.get("guard_dist_px") or arm_reach_px)
-        disp_ratio = guard_disp_px / float(scale_px)
-        # Bent-arm punch must have flexed elbow (not a straight lockout) and active excursion out of guard
-        if not (45.0 <= float(elbow_ang) <= 135.0 and disp_ratio >= 0.36 and float(ext_ratio) < 0.85):
-            continue
-        if f.get("in_guard"):
-            continue
-
-        prev_f = feats[i - 1]
-        next_f = feats[i + 1]
-        prev_d = float(prev_f.get("guard_dist_px") or prev_f.get("reach_px") or 0.0)
-        next_d = float(next_f.get("guard_dist_px") or next_f.get("reach_px") or 0.0)
-        if not (guard_disp_px >= prev_d - 1e-3 and guard_disp_px >= next_d - 1e-3):
-            continue
-
+        scale_px = scale
         # Distinguish Hook (elbow raised near shoulder level) vs Uppercut (elbow dipped below shoulder & wrist rises)
         el_drop_ratio = (el_xy[1] - sh_xy[1]) / float(scale_px)
         wr_above_el_ratio = (el_xy[1] - wr_xy[1]) / float(scale_px)
@@ -1196,13 +1206,13 @@ def _detect_bent_arm_punches(
         if -0.25 <= el_drop_ratio <= 0.30 and abs(wr_xy[1] - sh_xy[1]) <= 0.42 * float(scale_px):
             punch_kind = f"{'lead' if hand_label == '前手' else 'rear'}_hook"
             punch_label = f"{hand_label}平勾拳 (Hook)"
-        elif el_drop_ratio > 0.30 and wr_above_el_ratio >= 0.16:
+        elif (el_drop_ratio > 0.30 and wr_above_el_ratio >= 0.16
+              and (feats[start]["offset_xy"][1] - f["offset_xy"][1]) / scale / elapsed >= 0.8):
             punch_kind = f"{'lead' if hand_label == '前手' else 'rear'}_uppercut"
             punch_label = f"{hand_label}上勾拳 (Uppercut)"
 
         if punch_kind is not None and punch_label is not None:
-            last_pos = i
-            returned = any(bool(feats[j].get("in_guard")) for j in range(i + 1, min(n, i + 15)))
+            last_peak = times[i]
             detected.append(
                 {
                     "punch_id": f"{punch_kind}_{len(detected) + 1:02d}",
@@ -1211,7 +1221,7 @@ def _detect_bent_arm_punches(
                     "frame_index": src_idx,
                     "timestamp_ms": round(float(f["timestamp_ms"]), 2),
                     "elbow_angle_deg": round(float(elbow_ang), 1),
-                    "returned_to_guard": returned,
+                    "returned_to_guard": True,
                 }
             )
     return detected
@@ -1253,36 +1263,17 @@ def analyze_jab_and_one_two(
     )
     rear_metrics = compute_rear_straight_metrics(rear_seg, single_person_confirmed=single_person_confirmed)
 
-    jab_feat_map = {int(f["source_frame_index"]): f for f in jab_seg.get("frame_features", [])}
-    rear_feat_map = {int(f["source_frame_index"]): f for f in rear_seg.get("frame_features", [])}
-
-    def _is_bent_punch_peak(feat_map: dict[int, dict[str, Any]], frame_idx: int | None) -> bool:
-        if frame_idx is None or int(frame_idx) not in feat_map:
-            return False
-        ft = feat_map[int(frame_idx)]
-        ang = ft.get("elbow_angle_deg")
-        ext = ft.get("ext_ratio")
-        return ang is not None and ext is not None and float(ang) < 128.0 and float(ext) < 0.82
-
-    jab_Real = [
-        m for m in jab_metrics["action_metrics"]
-        if "feint_or_incomplete_extension" not in m.get("quality_reasons", [])
-        and not _is_bent_punch_peak(jab_feat_map, m.get("extension_frame_index"))
-    ]
-    rear_Real = [
-        m for m in rear_metrics["action_metrics"]
-        if "feint_or_incomplete_extension" not in m.get("quality_reasons", [])
-        and not _is_bent_punch_peak(rear_feat_map, m.get("extension_frame_index"))
-    ]
+    jab_actions = completed_straights(jab_metrics["action_metrics"])
+    rear_actions = completed_straights(rear_metrics["action_metrics"])
 
     combos: list[dict[str, Any]] = []
     used_rear_ids: set[str] = set()
-    for j_act in jab_Real:
+    for j_act in jab_actions:
         j_ext_ms = j_act.get("extension_ms")
         if j_ext_ms is None:
             continue
         best_rear = None
-        for r_act in rear_Real:
+        for r_act in rear_actions:
             if r_act["action_id"] in used_rear_ids:
                 continue
             r_ext_ms = r_act.get("extension_ms")
@@ -1331,21 +1322,16 @@ def analyze_jab_and_one_two(
                 f"检出 {len(combos)} 组 1-2 连击，中位衔接间隔 {med_interval:.0f} ms；"
                 "可在刺拳触点回抽瞬间同步启动后手转髋，进一步缩短 1-2 衔接停顿。"
             )
-    elif jab_Real:
+    elif jab_actions:
         combo_feedback = (
-            f"检出前手刺拳 (Jab) {len(jab_Real)} 次（有效完整回手 {jab_metrics['valid_count']} 次），"
+            f"检出前手刺拳 (Jab) {len(jab_actions)} 次（有效完整回手 {jab_metrics['valid_count']} 次），"
             "未检出紧随刺拳（≤750ms）的 1-2 连击组合。"
         )
     else:
         combo_feedback = "当前片段以单拳或后手练习为主，未检出明显的前手刺拳或 1-2 连击。"
 
-    straight_frames = {
-        int(m["extension_frame_index"])
-        for m in (jab_Real + rear_Real)
-        if m.get("extension_frame_index") is not None
-    }
-    lead_bent = _detect_bent_arm_punches(jab_seg, hand_label="前手", straight_frames=straight_frames)
-    rear_bent = _detect_bent_arm_punches(rear_seg, hand_label="后手", straight_frames=straight_frames)
+    lead_bent = _detect_bent_arm_punches(jab_seg, hand_label="前手", straights=jab_actions) if single_person_confirmed else []
+    rear_bent = _detect_bent_arm_punches(rear_seg, hand_label="后手", straights=rear_actions) if single_person_confirmed else []
     bent_punches = sorted(lead_bent + rear_bent, key=lambda p: int(p["frame_index"]))
     hook_count = sum(1 for p in bent_punches if p["punch_kind"].endswith("_hook"))
     uppercut_count = sum(1 for p in bent_punches if p["punch_kind"].endswith("_uppercut"))
@@ -1353,7 +1339,7 @@ def analyze_jab_and_one_two(
     one_two_three_combos: list[dict[str, Any]] = []
     used_bent: set[str] = set()
     for c in combos:
-        r_act = next((r for r in rear_Real if r["action_id"] == c["rear_action_id"]), None)
+        r_act = next((r for r in rear_actions if r["action_id"] == c["rear_action_id"]), None)
         if r_act is None or r_act.get("extension_ms") is None:
             continue
         r_ms = float(r_act["extension_ms"])
@@ -1386,7 +1372,12 @@ def analyze_jab_and_one_two(
     return {
         "jab_segmentation": jab_seg,
         "jab_metrics": jab_metrics,
-        "jab_attempt_count": len(jab_Real),
+        "straight_events": sorted(
+            ({"frame_index": a["extension_frame_index"], "timestamp_ms": a["extension_ms"], "punch_type": name}
+             for name, actions in (("前手刺拳", jab_actions), ("后手直拳", rear_actions)) for a in actions),
+            key=lambda event: event["timestamp_ms"],
+        ),
+        "jab_attempt_count": len(jab_actions),
         "jab_valid_count": jab_metrics["valid_count"],
         "jab_defense_grade": jab_metrics["defense_grade"],
         "jab_defense_score": jab_metrics["defense_score"],

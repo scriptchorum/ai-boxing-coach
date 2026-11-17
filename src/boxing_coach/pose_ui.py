@@ -23,6 +23,7 @@ from .scorecard_report import (
     extract_keyframe_previews,
 )
 from .rear_straight_review import (
+    RULE_VERSION,
     analyze_jab_and_one_two,
     apply_action_override,
     build_history_entry,
@@ -157,7 +158,7 @@ def render_review_files(cached,uploaded):
         render_review_download(cached,key='review_download')
 
 
-def render_strike_audit_section(cached, tracker_enabled):
+def render_strike_audit_section(cached, tracker_enabled, width=1280, height=720):
     with st.expander('泰拳击打与防守动作审计（前/后手直拳峰值、护头掉落率与转髋角度）', expanded=True):
         st.caption('基于姿态关键点在时间线上的伸展峰值审计直拳动作，并根据质量门禁（单人确认、关键点可见度）输出客观观察结果。')
         c1, c2 = st.columns(2)
@@ -165,11 +166,11 @@ def render_strike_audit_section(cached, tracker_enabled):
         stance = 'orthodox' if 'Orthodox' in stance_label else 'southpaw'
         single_person = c2.checkbox('目视确认：训练区域无背景人物干扰 (解锁合规指标计算)', value=True, key='audit_single_person_confirmed')
 
-        auditor = StrikeAuditor(stance=stance)
+        auditor = StrikeAuditor(stance=stance, width=width, height=height)
         audit_res = auditor.audit_pose_run(cached, single_person_confirmed=single_person, tracker=tracker_enabled)
 
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric('检测到局部伸展峰值', f"{audit_res['candidate_strike_count']} 次")
+        m1.metric('已回落的直拳候选', f"{audit_res['candidate_strike_count']} 次")
         m2.metric('门禁合规击打', f"{audit_res['eligible_strike_count']} 次")
         m3.metric('前手 / 后手直拳', f"{audit_res['lead_strikes']} / {audit_res['rear_strikes']}")
         guard_rate = audit_res.get('guard_drop_rate')
@@ -203,7 +204,7 @@ def render_strike_audit_section(cached, tracker_enabled):
             sel_strike_frame = st.selectbox('选择要复核的击打瞬间帧', strike_indices, format_func=lambda i: f"源帧 {i}", key='sel_strike_frame_jump')
             st.button('跳转至该击打峰值帧', key='jump_strike_frame_btn', on_click=go_review, args=(sel_strike_frame,))
 
-        audit_key = (cached.key, stance, bool(single_person), bool(tracker_enabled))
+        audit_key = (RULE_VERSION, cached.key, stance, bool(single_person), bool(tracker_enabled))
         if st.button('生成击打与门禁审计摘要', key='strike_audit_prepare'):
             st.session_state.pose_strike_audit = {
                 'key': audit_key,
@@ -287,8 +288,8 @@ def render_rear_straight_review_section(video, cached, mirror):
             iqr_label = '-'
         k0, k1, k2, k3, k4 = st.columns(5)
         k0.metric('回防评分', metrics.get('defense_grade', '暂无'))
-        k1.metric('候选后手直拳', f"{metrics['candidate_count']} 次")
-        k2.metric('有效完整动作', f"{metrics['valid_count']} 次")
+        k1.metric('后手直拳（已回落）', f"{metrics['completed_count']} 次")
+        k2.metric('回位保持满 100 ms', f"{metrics['valid_count']} 次")
         k3.metric('同场次中位回手时间', median_label)
         k4.metric('同场次四分位距 (IQR)', iqr_label)
 
@@ -367,15 +368,19 @@ def render_rear_straight_review_section(video, cached, mirror):
             )
 
         mt_res = analyze_muaythai_arsenal(
-            cached.frames,
-            stance=stance,
+            cached.frames, width=width, height=height,
+            punch_events=combo_res["straight_events"], stance=stance,
             single_person_confirmed=single_ok,
         )
-        st.markdown('**🦵 泰拳专项：高抱架、扫踢、冲膝、提膝格挡与拳腿立体连击（B03）：**')
-        m1, m2, m3, m4 = st.columns(4)
+        st.markdown('**🦵 泰拳专项：高抱架、扫踢、正蹬、冲膝、提膝格挡与拳腿立体连击（B03）：**')
+        st.caption('同侧手臂两次峰值至少相隔 260 ms，同侧腿至少相隔 450 ms。遮挡、未回落或腿法证据不足的片段可逐帧复核。')
+        m1, m2, teep = st.columns(3)
+        knee, m3, m4 = st.columns(3)
         hg_rate = mt_res.get('high_guard_retention_rate')
         m1.metric('泰拳高抱架保持率', f'{hg_rate * 100:.0f}%' if hg_rate is not None else '暂无')
-        m2.metric('泰式扫踢 / 冲膝', f"{mt_res['kick_count']} 腿 / {mt_res['knee_count']} 膝")
+        m2.metric('泰式扫踢', f"{mt_res['kick_count']} 次")
+        teep.metric('正蹬 / Stab (Teep)', f"{mt_res['teep_count']} 次")
+        knee.metric('冲膝', f"{mt_res['knee_count']} 次")
         m3.metric('提膝格挡 (Shin Check)', f"{mt_res['shin_check_count']} 次")
         m4.metric('拳腿/拳膝立体连击', f"{mt_res['combo_count']} 组")
         st.caption(mt_res['muaythai_feedback'])
@@ -480,7 +485,7 @@ def render_rear_straight_review_section(video, cached, mirror):
         else:
             st.caption('当前区间未检出后手直拳候选动作。')
 
-        ann_key = (cached.key, stance, tuple(sorted(overrides.keys())))
+        ann_key = (RULE_VERSION, cached.key, stance, bool(single_ok), repr(sorted(overrides.items())))
         e_col1, e_col2 = st.columns(2)
         if e_col1.button('准备完整图文复盘评分报告（离线 HTML）', key='scorecard_html_prepare'):
             vid_name = getattr(getattr(video, 'path', None), 'name', None)
@@ -576,8 +581,8 @@ def render_rear_straight_review_section(video, cached, mirror):
                         done / max(tot, 1), text=f'批量复盘进度 {done}/{tot}：{name}'
                     ),
                 )
-                st.session_state.pose_batch_table = batch_res['rows']
-                existing_labels = {h.get('label') for h in history}
+                st.session_state.pose_batch_table = (RULE_VERSION, batch_res['rows'])
+                existing_labels = {h.get('label') for h in history if h.get('condition', {}).get('rule_version') == RULE_VERSION}
                 for he in batch_res['history_entries']:
                     if he.get('label') not in existing_labels:
                         he['entry_id'] = f'hist-{len(history) + 1}'
@@ -590,9 +595,9 @@ def render_rear_straight_review_section(video, cached, mirror):
                     pass
 
         batch_rows = st.session_state.get('pose_batch_table')
-        if batch_rows:
+        if isinstance(batch_rows, tuple) and batch_rows[0] == RULE_VERSION and batch_rows[1]:
             st.markdown('**📊 同文件夹多视频横向复盘对比总表：**')
-            st.dataframe(batch_rows, hide_index=True)
+            st.dataframe(batch_rows[1], hide_index=True)
 
         if history:
             comp = compare_same_condition_history(
@@ -683,7 +688,7 @@ def render_pose_panel(video,start,end,mirror):
 
     # 1. Core Coaching & Scoring Dashboard at the very top
     render_rear_straight_review_section(video, cached, mirror)
-    render_strike_audit_section(cached, enable_tracker)
+    render_strike_audit_section(cached, enable_tracker, video.inspection.width, video.inspection.height)
 
     # 2. Synced Video & Skeleton Player
     decisions = assess_frames(cached, tracker=enable_tracker, allow_upper_body=allow_upper)

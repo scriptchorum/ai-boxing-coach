@@ -205,9 +205,9 @@ class StrikeDetectorTests(unittest.TestCase):
         low_sig_run = make_strike_pose_run(frames)
         low_sig = self.auditor.audit_pose_run(low_sig_run, single_person_confirmed=True)
         self.assertEqual(low_sig['eligible_strike_count'], 0)
-        self.assertEqual(low_sig['strikes'][0]['status'], 'rejected')
-        self.assertIn('critical_landmark_low_signal', low_sig['strikes'][0]['gates']['extension']['reason_codes'])
-        self.assertIsNone(low_sig['strikes'][0]['extension_ratio'])
+        # A gap at the peak interrupts the excursion before an audit event exists.
+        self.assertEqual(low_sig['candidate_strike_count'], 0)
+        self.assertEqual(low_sig['strikes'], [])
         self.assertIsNone(low_sig['guard_drops'])
         self.assertEqual(low_sig['observations'], [])
 

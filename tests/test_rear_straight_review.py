@@ -284,6 +284,82 @@ class RearStraightReviewTests(unittest.TestCase):
         self.assertEqual(combo["one_two_combos"][0]["combo_interval_ms"], 200.0)
         self.assertTrue(combo["one_two_combos"][0]["both_returned"])
 
+    def test_same_hand_interval_uses_pts_with_irregular_sampling(self):
+        for interval, expected in [(259, 1), (260, 2), (400, 2)]:
+            frames = [_make_frame(i, i * 50) for i in range(10)]
+            for peak in (600, 600 + interval):
+                for dt, wrist, elbow in [(-65, .44, .42), (-32, .60, .50), (0, .74, .56),
+                                         (29, .58, .50), (70, .44, .42), (147, .44, .42)]:
+                    frames.append(_make_frame(len(frames) * 5, peak + dt,
+                                              right_wrist_x=wrist, right_elbow_x=elbow))
+            frames.append(_make_frame(len(frames) * 5, 600 + interval + 202))
+            seg = segment_rear_straights(frames)
+            result = compute_rear_straight_metrics(seg, single_person_confirmed=True)
+            self.assertEqual(result["completed_count"], expected, interval)
+
+    def test_held_extension_with_one_frame_guard_glitch_counts_once(self):
+        frames = [_make_frame(i, i * 40) for i in range(40)]
+        for i in range(15, 31):
+            if i != 22:
+                frames[i] = _make_frame(i, i * 40, right_wrist_x=.74, right_elbow_x=.56)
+        combo = analyze_jab_and_one_two(frames)
+        self.assertEqual(len(combo["straight_events"]), 1)
+        self.assertEqual(combo["straight_events"][0]["frame_index"], 15)
+        self.assertEqual((combo["hook_count"], combo["uppercut_count"]), (0, 0))
+
+    def test_single_frame_far_wrist_jump_and_small_stance_shift_do_not_count(self):
+        frames = []
+        for i in range(55):
+            f = _make_frame(i, i * 25, left_wrist_x=.56 + .008 * (i % 3))
+            for point in f["landmarks"]:
+                point["image"]["x"] += .001 * i
+            frames.append(f)
+        frames[32] = _make_frame(32, 800, left_elbow_x=.36, left_wrist_x=.20)
+        for low_visibility in (False, True):
+            if low_visibility:
+                frames[32]["landmarks"][4]["visibility"] = .54
+            combo = analyze_jab_and_one_two(frames)
+            self.assertEqual(combo["straight_events"], [])
+            self.assertEqual(combo["bent_arm_punches"], [])
+
+    def test_same_motion_at_different_frame_rates(self):
+        for fps in (24, 30, 60, 120):
+            with self.subTest(fps=fps):
+                frames = []
+                for i in range(fps * 2):
+                    ts = i * 1000 / fps
+                    amp = max(0, 1 - min(abs(ts - 650), abs(ts - 1100)) / 115)
+                    frames.append(_make_frame(i, ts, right_wrist_x=.44 + .30 * amp,
+                                             right_elbow_x=.42 + .14 * amp))
+                result = compute_rear_straight_metrics(segment_rear_straights(frames))
+                self.assertEqual(result["completed_count"], 2)
+
+    def test_long_straight_return_is_not_a_hook_and_missing_return_does_not_count(self):
+        frames = [_make_frame(i, i * 40) for i in range(13)]
+        for i, wrist, elbow in [(13, .60, .50), (14, .74, .56), (15, .68, .54)]:
+            frames.append(_make_frame(i, i * 40, right_wrist_x=wrist, right_elbow_x=elbow))
+        for i in range(16, 26):
+            f = _make_frame(i, i * 40, right_elbow_x=.50, right_elbow_y=.35)
+            f["landmarks"][5] = _make_landmark(16, .50, .23)
+            frames.append(f)
+        self.assertEqual(compute_rear_straight_metrics(segment_rear_straights(frames))["completed_count"], 0)
+        frames.extend(_make_frame(i, i * 40) for i in range(26, 32))
+        combo = analyze_jab_and_one_two(frames)
+        self.assertEqual(len(combo["straight_events"]), 1)
+        self.assertEqual((combo["hook_count"], combo["uppercut_count"]), (0, 0))
+
+    def test_uppercut_requires_upward_speed_and_a_supported_return(self):
+        def sequence(step):
+            frames = [_make_frame(i, i * 50) for i in range(11)]
+            for n, amp in enumerate((0, .3, .6, .85, 1, .8, .5, .2, 0)):
+                f = _make_frame(11+n, 550 + step*n, right_elbow_x=.42+.06*amp,
+                                right_elbow_y=.44+.015*amp)
+                f["landmarks"][5] = _make_landmark(16, .44+.115*amp, .35-.10*amp)
+                frames.append(f)
+            return frames
+        self.assertEqual(analyze_jab_and_one_two(sequence(30))["uppercut_count"], 1)
+        self.assertEqual(analyze_jab_and_one_two(sequence(145))["uppercut_count"], 0)
+
     def test_hook_uppercut_one_two_three_and_scorecard_html(self):
         frames: list[dict] = [_make_frame(i, i * 50.0) for i in range(11)]
         # 1. Lead jab at frame 13 (650 ms)
@@ -302,8 +378,13 @@ class RearStraightReviewTests(unittest.TestCase):
         # L shoulder is at (0.52, 0.35). Put L elbow at (0.42, 0.35) and L wrist at (0.42, 0.25) -> 90 deg flexed hook!
         f21 = _make_frame(21, 1050.0, left_elbow_x=0.42, left_elbow_y=0.35, left_wrist_x=0.39)
         f21["landmarks"][4] = _make_landmark(15, 0.42, 0.23)
+        # A real hook has an approach and a return on neighboring observations.
+        f20 = _make_frame(20, 1000.0, left_elbow_x=0.45, left_elbow_y=0.37)
+        f20["landmarks"][4] = _make_landmark(15, 0.46, 0.27)
+        frames[20] = f20
         frames.append(f21)
-        for k in range(22, 28):
+        frames.append(dict(f20, source_frame_index=22, timestamp_ms=1100.0))
+        for k in range(23, 28):
             frames.append(_make_frame(k, k * 50.0))
 
         combo = analyze_jab_and_one_two(frames, stance="orthodox", sample_id="combo-123")

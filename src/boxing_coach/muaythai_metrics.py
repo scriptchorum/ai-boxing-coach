@@ -8,7 +8,11 @@ Provides lightweight, interpretable indicators:
 from __future__ import annotations
 
 import math
+from statistics import median
 from typing import Any, Sequence
+
+from .motion_windows import LEG_INTERVAL_MS, MIN_CONFIDENCE, excursions, supported_signal
+from .rear_straight_review import straight_events
 
 # Key landmark indices in MediaPipe Pose
 NOSE = 0
@@ -219,12 +223,117 @@ def check_muaythai_high_guard(
     }
 
 
-def _median_or_default(values: Sequence[float], default: float) -> float:
-    if not values:
-        return default
-    s = sorted(values)
-    mid = len(s) // 2
-    return s[mid] if len(s) % 2 == 1 else (s[mid - 1] + s[mid]) / 2.0
+def _reliable_landmark(point):
+    xy = get_xy(point)
+    return (xy is not None and all(0 <= v <= 1 for v in xy)
+            and all(isinstance(point.get(key), (int, float)) and MIN_CONFIDENCE <= point[key] <= 1
+                    for key in ("visibility", "presence")))
+
+
+def _leg_channels(points, hip, knee, ankle, support, aspect):
+    def image(index):
+        return points[index]["image"] if index in points else None
+
+    h, k, a, other = map(image, (hip, knee, ankle, support))
+    if not all((h, k, a)):
+        return {}
+    def depth(point):
+        z = point.get("z")
+        return z if isinstance(z, (int, float)) and math.isfinite(z) else None
+
+    az, hz = depth(a), depth(h)
+    return {
+        "kx": (k["x"] - h["x"]) * aspect, "ky": k["y"] - h["y"],
+        "ax": (a["x"] - h["x"]) * aspect, "ay": a["y"] - h["y"],
+        "az": (az - hz) * aspect if az is not None and hz is not None else None,
+        "hip_width": (h["x"] - other["x"]) * aspect if other else None,
+        "hip_tilt": h["y"] - other["y"] if other else None,
+    }
+
+
+def _classify_leg(ch, start, end, scale, times, guards):
+    """Classify one completed excursion. Ambiguous extended legs stay unclassified."""
+    kx, ky, ax, ay = (ch[k] for k in ("kx", "ky", "ax", "ay"))
+    moving = range(start + 1, end)
+    def shin_x(i):
+        return abs(ax[i] - kx[i])
+
+    zs = ch["az"][start:end + 1]
+    depth_observed = None not in zs
+    def foot_excursion(i):
+        lateral = shin_x(i) - shin_x(start)
+        depth = abs(ch["az"][i] - zs[0]) if depth_observed else 0.0
+        return max(lateral, depth)
+
+    foot = max(moving, key=foot_excursion)
+    knee = min(moving, key=ky.__getitem__)
+    knee_rise = ky[start] - ky[knee]
+    if knee_rise < 0.14 * scale:
+        return None
+    depth_sweep = depth_observed and abs(ch["az"][foot] - zs[0]) >= 0.20 * scale
+    reaches_out = shin_x(foot) >= 0.28 * scale and shin_x(foot) - shin_x(start) >= 0.20 * scale
+    if reaches_out or depth_sweep:
+        # Compare the pelvis with its own pre-lift pose. Side-on hip widths can approach zero.
+        hip_windows = [ch[key][start:foot + 1] for key in ("hip_width", "hip_tilt")]
+        if any(None in values for values in hip_windows):
+            return None
+        turn = max(max(abs(v - values[0]) for v in values) for values in hip_windows) / scale
+        if turn >= 0.12 and depth_sweep:
+            return "roundhouse_kick", foot
+        chamber = next((i for i in range(start + 1, foot)
+                        if ky[start] - ky[i] >= 0.14 * scale and shin_x(i) < 0.20 * scale), None)
+        origin = chamber if chamber is not None else start
+        dx, dy = ax[foot] - ax[origin], ay[foot] - ay[origin]
+        chord = math.hypot(dx, dy)
+        if chord < 0.22 * scale:
+            return None
+        path = range(origin, foot + 1)
+        bend = max(abs(dx * (ay[i] - ay[origin]) - dy * (ax[i] - ax[origin]))
+                   for i in path) / chord / scale
+        horizontal_shin = shin_x(foot) >= abs(ay[foot] - ky[foot])
+        if turn >= 0.12 and horizontal_shin and bend >= 0.06:
+            return "roundhouse_kick", foot
+        thigh = math.hypot(kx[foot], ky[foot])
+        shin = math.hypot(ax[foot] - kx[foot], ay[foot] - ky[foot])
+        extension = math.hypot(ax[foot], ay[foot]) / max(thigh + shin, 1e-6)
+        path_length = sum(math.hypot(ax[i] - ax[i-1], ay[i] - ay[i-1]) for i in range(origin+1, foot+1))
+        if (turn <= 0.08 and extension >= 0.84 and chord >= 0.92 * path_length
+                and chamber is not None and times[foot] - times[chamber] >= 40
+                and abs(dx) >= 0.22 * scale and bend <= 0.09 and not depth_sweep):
+            return "teep_kick", foot
+        return None
+
+    knee_drive = abs(kx[knee] - kx[start]) / scale
+    if knee_drive >= 0.17 and knee_rise >= 0.22 * scale:
+        return "knee_strike", knee
+    if (knee_drive < 0.15 and shin_x(knee) <= 0.15 * scale
+            and ay[knee] - ky[knee] > 0.12 * scale and guards[knee].get("both_hands_high")):
+        return "shin_check", knee
+    return None
+
+
+def _leg_movements(rows, times, guards):
+    keys = ("kx", "ky", "ax", "ay", "az", "hip_width", "hip_tilt")
+    ch = {k: supported_signal([row.get(k) for row in rows], times) for k in keys}
+    standing = sorted((v, i) for i, v in enumerate(ch["ay"]) if v is not None)
+    if not standing:
+        return
+    # Use the most grounded quarter to estimate this leg's resting pose.
+    grounded = [i for _, i in standing[3 * len(standing) // 4:]]
+    base_k, base_a, base_x = (median(ch[k][i] for i in grounded) for k in ("ky", "ay", "ax"))
+    scale = median(math.hypot(ch["ax"][i], ch["ay"][i]) for i in grounded)
+    if scale <= 1e-4:
+        return
+    signal = [None if k is None else max(base_k - k, base_a - a, abs(x - base_x)) / scale
+              for k, a, x in zip(ch["ky"], ch["ay"], ch["ax"])]
+    last_peak = -math.inf
+    for start, _, end in excursions(signal, times, 0.12, 0.18):
+        event = _classify_leg(ch, start, end, scale, times, guards)
+        if event is not None:
+            kind, peak = event
+            if times[peak] - last_peak >= LEG_INTERVAL_MS:
+                yield kind, start, peak, end
+                last_peak = times[peak]
 
 
 def analyze_muaythai_arsenal(
@@ -232,11 +341,16 @@ def analyze_muaythai_arsenal(
     *,
     stance: str = 'orthodox',
     single_person_confirmed: bool = True,
+    width: int = 1280,
+    height: int = 720,
+    punch_events: Sequence[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """B03: Analyze Muay Thai kicks, knee strikes, shin-check defense, high guard, and punch-to-kick/knee combos.
 
     Gracefully supports both full-body and half-body (upper-body only) videos.
     """
+    if width <= 0 or height <= 0:
+        raise ValueError("width and height must be positive")
     is_orthodox = stance.lower() == 'orthodox'
     lead_hip_idx, rear_hip_idx = (LEFT_HIP, RIGHT_HIP) if is_orthodox else (RIGHT_HIP, LEFT_HIP)
     lead_knee_idx, rear_knee_idx = (LEFT_KNEE, RIGHT_KNEE) if is_orthodox else (RIGHT_KNEE, LEFT_KNEE)
@@ -246,57 +360,21 @@ def analyze_muaythai_arsenal(
     upper_observed_frames = 0
     lower_observed_frames = 0
 
-    lead_knee_gaps: list[float] = []
-    rear_knee_gaps: list[float] = []
-    lead_ankle_ys: list[float] = []
-    rear_ankle_ys: list[float] = []
-
-    per_frame: list[dict[str, Any]] = []
-    for idx, f in enumerate(frames):
-        lms = f.get('landmarks', [])
-        pts = {p['index']: p for p in lms if 'index' in p}
-        hg = check_muaythai_high_guard(lms, stance=stance)
-        if hg['status'] == 'observed':
+    times = [float(f["timestamp_ms"]) for f in frames]
+    guards = []
+    lead_rows = []
+    rear_rows = []
+    for f in frames:
+        lms = f.get("landmarks", [])
+        pts = {p["index"]: p for p in lms if _reliable_landmark(p)}
+        hg = check_muaythai_high_guard(list(pts.values()), stance=stance)
+        guards.append(hg)
+        if hg["status"] == "observed":
             upper_observed_frames += 1
-            if hg['high_guard_active']:
-                high_guard_frames += 1
-
-        lead_ext = compute_arm_extension_ratio(lms, arm='lead', stance=stance).get('extension_ratio')
-        rear_ext = compute_arm_extension_ratio(lms, arm='rear', stance=stance).get('extension_ratio')
-
-        l_hip = get_xy(pts.get(lead_hip_idx))
-        r_hip = get_xy(pts.get(rear_hip_idx))
-        l_knee = get_xy(pts.get(lead_knee_idx))
-        r_knee = get_xy(pts.get(rear_knee_idx))
-        l_ank = get_xy(pts.get(lead_ankle_idx))
-        r_ank = get_xy(pts.get(rear_ankle_idx))
-
-        has_lower = bool((l_hip and l_knee) or (r_hip and r_knee))
-        if has_lower:
-            lower_observed_frames += 1
-        if l_hip and l_knee:
-            lead_knee_gaps.append(l_knee[1] - l_hip[1])
-        if r_hip and r_knee:
-            rear_knee_gaps.append(r_knee[1] - r_hip[1])
-        if l_ank:
-            lead_ankle_ys.append(l_ank[1])
-        if r_ank:
-            rear_ankle_ys.append(r_ank[1])
-
-        per_frame.append({
-            'pos': idx,
-            'frame_index': int(f.get('source_frame_index', idx)),
-            'timestamp_ms': float(f.get('timestamp_ms', idx * 33.333)),
-            'lead_ext': lead_ext,
-            'rear_ext': rear_ext,
-            'hg': hg,
-            'l_hip': l_hip,
-            'r_hip': r_hip,
-            'l_knee': l_knee,
-            'r_knee': r_knee,
-            'l_ank': l_ank,
-            'r_ank': r_ank,
-        })
+            high_guard_frames += int(hg["high_guard_active"])
+        lead_rows.append(_leg_channels(pts, lead_hip_idx, lead_knee_idx, lead_ankle_idx, rear_hip_idx, width / height))
+        rear_rows.append(_leg_channels(pts, rear_hip_idx, rear_knee_idx, rear_ankle_idx, lead_hip_idx, width / height))
+        lower_observed_frames += int(bool(lead_rows[-1] or rear_rows[-1]))
 
     total_frames = len(frames)
     lower_coverage = (lower_observed_frames / total_frames) if total_frames > 0 else 0.0
@@ -311,137 +389,25 @@ def analyze_muaythai_arsenal(
     else:
         body_framing = 'full_body'
 
-    base_l_knee_gap = _median_or_default(lead_knee_gaps, 0.18)
-    base_r_knee_gap = _median_or_default(rear_knee_gaps, 0.18)
-    base_l_ank_y = _median_or_default(lead_ankle_ys, 0.84)
-    base_r_ank_y = _median_or_default(rear_ankle_ys, 0.84)
-
-    punch_events: list[dict[str, Any]] = []
-    leg_events: list[dict[str, Any]] = []
-    shin_checks: list[dict[str, Any]] = []
-
-    last_lead_punch_pos = -5
-    last_rear_punch_pos = -5
-    last_leg_pos = -6
-
-    for i, pf in enumerate(per_frame):
-        # 1. Detect straight punch peaks for combo pairing
-        for arm_key, p_type, last_pos_ref in (
-            ('lead_ext', '前手刺拳', 'lead'),
-            ('rear_ext', '后手直拳', 'rear'),
-        ):
-            val = pf[arm_key]
-            if val is not None and val >= 0.80:
-                prev_v = per_frame[i - 1][arm_key] if i > 0 else None
-                next_v = per_frame[i + 1][arm_key] if i + 1 < len(per_frame) else None
-                if (prev_v is None or val >= prev_v) and (next_v is None or val >= next_v):
-                    last_pos = last_lead_punch_pos if last_pos_ref == 'lead' else last_rear_punch_pos
-                    if i - last_pos >= 4:
-                        if last_pos_ref == 'lead':
-                            last_lead_punch_pos = i
-                        else:
-                            last_rear_punch_pos = i
-                        punch_events.append({
-                            'pos': i,
-                            'punch_type': p_type,
-                            'frame_index': pf['frame_index'],
-                            'timestamp_ms': pf['timestamp_ms'],
-                        })
-
-        if not single_person_confirmed or body_framing == 'upper_body_only':
-            continue
-
-        if i - last_leg_pos < 5:
-            continue
-
-        # 2. Check Lead / Rear Leg actions (Roundhouse Kick, Knee Strike, Shin Check)
-        for side_label, hip_pt, knee_pt, ank_pt, base_gap, base_ank in (
-            ('前', pf['l_hip'], pf['l_knee'], pf['l_ank'], base_l_knee_gap, base_l_ank_y),
-            ('后', pf['r_hip'], pf['r_knee'], pf['r_ank'], base_r_knee_gap, base_r_ank_y),
-        ):
-            if not hip_pt or not knee_pt:
-                continue
-            knee_gap = knee_pt[1] - hip_pt[1]
-            knee_rise = base_gap - knee_gap
-            ank_rise = (base_ank - ank_pt[1]) if ank_pt is not None else 0.0
-
-            # Check if local apex of knee/ankle elevation
-            next_pf = per_frame[i + 1] if i + 1 < len(per_frame) else None
-            prev_pf = per_frame[i - 1] if i > 0 else None
-            knee_key = 'l_knee' if side_label == '前' else 'r_knee'
-            ank_key = 'l_ank' if side_label == '前' else 'r_ank'
-            if prev_pf and prev_pf[knee_key] and knee_pt[1] > prev_pf[knee_key][1] + 0.005:
-                continue
-            if next_pf and next_pf[knee_key] and knee_pt[1] > next_pf[knee_key][1] + 0.005:
-                continue
-
-            # Evaluate leg extension & horizontal reach for Roundhouse Kick
-            if ank_pt is not None and (
-                ank_pt[1] <= hip_pt[1] + 0.12
-                or (ank_rise >= 0.12 and abs(ank_pt[0] - hip_pt[0]) >= 0.10)
-            ):
-                thigh = math.hypot(knee_pt[0] - hip_pt[0], knee_pt[1] - hip_pt[1])
-                shin = math.hypot(ank_pt[0] - knee_pt[0], ank_pt[1] - knee_pt[1])
-                leg_len = thigh + shin
-                direct_leg = math.hypot(ank_pt[0] - hip_pt[0], ank_pt[1] - hip_pt[1])
-                leg_ext_ratio = (direct_leg / leg_len) if leg_len > 1e-4 else 0.0
-                horiz_swing = abs(ank_pt[0] - hip_pt[0])
-
-                if leg_ext_ratio >= 0.78 or horiz_swing >= 0.12:
-                    # Find kick return frame
-                    ret_ms: float | None = None
-                    for j in range(i + 1, len(per_frame)):
-                        fut_ank = per_frame[j][ank_key]
-                        if fut_ank is not None and abs(fut_ank[1] - base_ank) <= 0.045:
-                            ret_ms = round(max(0.0, per_frame[j]['timestamp_ms'] - pf['timestamp_ms']), 2)
-                            break
-                    last_leg_pos = i
-                    leg_events.append({
-                        'event_id': f'mt_leg_{len(leg_events) + 1:02d}',
-                        'category': 'roundhouse_kick',
-                        'technique_name': f'{side_label}腿泰式扫踢',
-                        'frame_index': pf['frame_index'],
-                        'timestamp_ms': round(pf['timestamp_ms'], 2),
-                        'return_time_ms': ret_ms,
-                        'guard_kept': bool(pf['hg'].get('high_guard_active')),
-                    })
-                    break
-
-            # Otherwise check Knee Strike vs Shin Check Defense when knee rises
-            if knee_rise >= 0.055 or knee_gap <= 0.09:
-                shin_vertical = (
-                    ank_pt is not None
-                    and abs(ank_pt[0] - knee_pt[0]) <= 0.06
-                    and ank_pt[1] > knee_pt[1] + 0.05
-                )
-                both_arms_tucked = (
-                    (pf['lead_ext'] is None or pf['lead_ext'] < 0.72)
-                    and (pf['rear_ext'] is None or pf['rear_ext'] < 0.72)
-                    and bool(pf['hg'].get('both_hands_high'))
-                )
-                knee_forward_thrust = abs(knee_pt[0] - hip_pt[0]) >= 0.065 or knee_gap <= 0.04
-                if shin_vertical and both_arms_tucked and not knee_forward_thrust:
-                    last_leg_pos = i
-                    shin_checks.append({
-                        'check_id': f'mt_check_{len(shin_checks) + 1:02d}',
-                        'technique_name': f'{side_label}腿提膝格挡 (Shin Check)',
-                        'frame_index': pf['frame_index'],
-                        'timestamp_ms': round(pf['timestamp_ms'], 2),
-                        'high_guard_sealed': True,
-                    })
-                    break
-                else:
-                    last_leg_pos = i
-                    leg_events.append({
-                        'event_id': f'mt_leg_{len(leg_events) + 1:02d}',
-                        'category': 'knee_strike',
-                        'technique_name': f'{side_label}膝撞 (冲膝)',
-                        'frame_index': pf['frame_index'],
-                        'timestamp_ms': round(pf['timestamp_ms'], 2),
-                        'return_time_ms': None,
-                        'guard_kept': bool(pf['hg'].get('high_guard_active')),
-                    })
-                    break
+    if punch_events is None:
+        punch_events = straight_events(frames, stance.lower(), width=width, height=height) if single_person_confirmed else []
+    leg_events = []
+    shin_checks = []
+    names = {"roundhouse_kick": "腿泰式扫踢", "teep_kick": "腿正蹬 / Stab (Teep)",
+             "knee_strike": "膝撞 (冲膝)", "shin_check": "腿提膝格挡 (Shin Check)"}
+    if body_framing == "full_body" and single_person_confirmed and stance.lower() in ("orthodox", "southpaw"):
+        movements = [(peak, side, kind, start, end) for side, rows in (("前", lead_rows), ("后", rear_rows))
+                     for kind, start, peak, end in _leg_movements(rows, times, guards)]
+        for peak, side, kind, start, end in sorted(movements):
+            event = {"category": kind, "technique_name": side + names[kind],
+                     "frame_index": frames[peak]["source_frame_index"], "timestamp_ms": times[peak],
+                     "start_ms": times[start], "return_ms": times[end]}
+            if kind == "shin_check":
+                shin_checks.append(dict(event, check_id=f"mt_check_{len(shin_checks)+1:02d}", high_guard_sealed=True))
+            else:
+                leg_events.append(dict(event, event_id=f"mt_leg_{len(leg_events)+1:02d}",
+                                       return_time_ms=round(times[end] - times[peak], 2),
+                                       guard_kept=bool(guards[peak].get("high_guard_active"))))
 
     # 3. Pair Boxing -> Muay Thai Kick/Knee Combos (拳腿/拳膝立体连击)
     punch_leg_combos: list[dict[str, Any]] = []
@@ -468,19 +434,20 @@ def analyze_muaythai_arsenal(
             })
 
     kick_count = sum(1 for e in leg_events if e['category'] == 'roundhouse_kick')
+    teep_count = sum(1 for e in leg_events if e["category"] == "teep_kick")
     knee_count = sum(1 for e in leg_events if e['category'] == 'knee_strike')
     check_count = len(shin_checks)
     combo_count = len(punch_leg_combos)
 
     # 4. Build Coaching Feedback & B03 Drill Prescription
     if not single_person_confirmed:
-        feedback = '待确认单人训练后启用泰拳专项（扫踢、膝撞、提膝格挡与拳腿连击）统计。'
+        feedback = '待确认单人训练后启用泰拳专项（扫踢、正蹬、膝撞、提膝格挡与拳腿连击）统计。'
         drill = None
     elif body_framing == 'upper_body_only':
         hg_pct = f'{high_guard_rate * 100:.0f}%' if high_guard_rate is not None else '暂无'
         feedback = (
             f'当前为半身/近景画面（下肢关键点未完整入镜），已为您输出上肢泰拳高抱架保持率（{hg_pct}）；'
-            '如需统计泰拳扫踢、冲膝、提膝格挡与拳腿立体连击，请使用包含膝踝的全身镜头。'
+            '如需统计泰拳扫踢、正蹬、冲膝、提膝格挡与拳腿立体连击，请使用包含膝踝的全身镜头。'
         )
         drill = {
             'drill_id': 'B03_HIGH_GUARD_SHIELD',
@@ -490,10 +457,14 @@ def analyze_muaythai_arsenal(
             'steps': '双拳抬高至眉弓/额角高度，手肘内收护肋；每次刺拳或后手直拳出击后，异侧拳保持贴近眉弓与下颌。',
             'cue': '“拳高齐眉、肘收护肋、出拳不掉架”',
         }
+    elif teep_count and not (kick_count or knee_count or check_count):
+        feedback = (f"已回落动作中，扫踢 {kick_count} 次、正蹬 {teep_count} 次、冲膝 {knee_count} 次、"
+                    f"提膝格挡 {check_count} 次。可按峰值源帧回看片段。")
+        drill = None
     elif kick_count + knee_count + check_count == 0:
         hg_pct = f'{high_guard_rate * 100:.0f}%' if high_guard_rate is not None else '暂无'
         feedback = (
-            f'全身画面已就绪（泰拳高抱架保持率 {hg_pct}），本段以拳法动作为主，未检出明显扫踢、冲膝或提膝格挡。'
+            f'全身画面已就绪（泰拳高抱架保持率 {hg_pct}），本段未识别到分类证据充分且完成回落的腿部动作。'
         )
         drill = {
             'drill_id': 'B03_DUTCH_COMBO_INTRO',
@@ -508,7 +479,7 @@ def analyze_muaythai_arsenal(
         if unguarded_legs:
             first_bad = unguarded_legs[0]
             feedback = (
-                f"检出泰拳扫踢 {kick_count} 次、膝撞 {knee_count} 次、提膝格挡 {check_count} 次、拳腿/拳膝连击 {combo_count} 组；"
+                f"检出泰拳扫踢 {kick_count} 次、正蹬 {teep_count} 次、膝撞 {knee_count} 次、提膝格挡 {check_count} 次、拳腿/拳膝连击 {combo_count} 组；"
                 f"注意在源帧 {first_bad['frame_index']}（{first_bad['technique_name']}）起腿瞬间护头手下掉，易遭迎击拳反击。"
             )
             drill = {
@@ -521,7 +492,7 @@ def analyze_muaythai_arsenal(
             }
         else:
             feedback = (
-                f'泰拳立体攻防优秀：共检出扫踢 {kick_count} 次、膝撞 {knee_count} 次、'
+                f'泰拳立体攻防优秀：共检出扫踢 {kick_count} 次、正蹬 {teep_count} 次、膝撞 {knee_count} 次、'
                 f'提膝格挡 {check_count} 次、拳腿/拳膝连击 {combo_count} 组，起腿期间高抱架护头稳定。'
             )
             drill = {
@@ -539,6 +510,7 @@ def analyze_muaythai_arsenal(
         'lower_body_coverage_ratio': round(lower_coverage, 3),
         'high_guard_retention_rate': high_guard_rate,
         'kick_count': kick_count,
+        'teep_count': teep_count,
         'knee_count': knee_count,
         'shin_check_count': check_count,
         'combo_count': combo_count,

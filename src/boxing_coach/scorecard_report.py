@@ -51,8 +51,8 @@ def summarize_frames_for_batch(
         single_person_confirmed=True,
     )
     mt_res = analyze_muaythai_arsenal(
-        frames,
-        stance=stance,
+        frames, width=width, height=height,
+        punch_events=combo_res["straight_events"], stance=stance,
         single_person_confirmed=True,
     )
     hist_entry = build_history_entry(
@@ -67,7 +67,7 @@ def summarize_frames_for_batch(
     row = {
         "视频片段": label,
         "回防评分": rear_metrics.get("defense_grade", "暂无"),
-        "后手直拳 (候选/完整)": f"{rear_metrics['candidate_count']} / {rear_metrics['valid_count']}",
+        "后手直拳 (已回落/保持满 100 ms)": f"{rear_metrics.get('completed_count', rear_metrics['valid_count'])} / {rear_metrics['valid_count']}",
         "中位回手时间 (ms)": (
             f"{hist_entry['median_return_time_ms']:.1f}"
             if hist_entry.get("median_return_time_ms") is not None
@@ -78,8 +78,8 @@ def summarize_frames_for_batch(
         ),
         "1-2 / 1-2-3 连击": f"{combo_res['combo_count']} 组 / {combo_res['one_two_three_count']} 组",
         "泰拳高抱架率": f"{hg_rate * 100:.0f}%" if hg_rate is not None else "-",
-        "扫踢 / 冲膝 / 提膝格挡": (
-            f"{mt_res['kick_count']} / {mt_res['knee_count']} / {mt_res['shin_check_count']}"
+        "扫踢 / 正蹬 / 冲膝 / 提膝格挡": (
+            f"{mt_res['kick_count']} / {mt_res['teep_count']} / {mt_res['knee_count']} / {mt_res['shin_check_count']}"
         ),
         "头号优先建议": rear_metrics.get("top_priority_advice", ""),
         "训练处方 (B01)": (rear_metrics.get("drill_prescription") or {}).get("title", "-"),
@@ -178,13 +178,13 @@ def extract_keyframe_previews(
         candidates.append((int(top_f), "头号优先建议对应帧"))
     for act in rear_metrics.get("action_metrics", []):
         ext_f = act.get("extension_frame_index")
-        if ext_f is not None and int(ext_f) in frame_map:
+        if act.get('status') == 'valid' and ext_f is not None and int(ext_f) in frame_map:
             candidates.append((int(ext_f), f"后手直拳峰值 ({act['action_id']})"))
     for bp in combo_res.get("bent_arm_punches", []):
         bf = bp.get("frame_index")
         if bf is not None and int(bf) in frame_map:
             candidates.append((int(bf), str(bp["punch_type"])))
-    for le in mt_res.get("leg_events", []):
+    for le in (*mt_res.get("leg_events", []), *mt_res.get("shin_checks", [])):
         lf = le.get("frame_index")
         if lf is not None and int(lf) in frame_map:
             candidates.append((int(lf), str(le["technique_name"])))
@@ -334,7 +334,7 @@ def build_standalone_scorecard_html(
     <h2>一、核心回防评分与最高优先建议（T08–T11）</h2>
     <div class="grid">
       <div class="metric"><div class="label">后手直拳回防评分</div><div class="value">{grade}</div></div>
-      <div class="metric"><div class="label">候选 / 完整后手直拳</div><div class="value">{rear_metrics['candidate_count']} / {rear_metrics['valid_count']} 次</div></div>
+      <div class="metric"><div class="label">后手直拳（已回落 / 保持满 100 ms）</div><div class="value">{rear_metrics.get('completed_count', rear_metrics['valid_count'])} / {rear_metrics['valid_count']} 次</div></div>
       <div class="metric"><div class="label">同场次中位回手时间</div><div class="value">{esc(med_label)}</div></div>
       <div class="metric"><div class="label">四分位距 (IQR)</div><div class="value">{esc(iqr_label)}</div></div>
       <div class="metric"><div class="label">泰拳高抱架保持率</div><div class="value">{esc(hg_label)}</div></div>
@@ -367,8 +367,9 @@ def build_standalone_scorecard_html(
   </div>
 
   <div class="card">
-    <h2>三、泰拳专项：高抱架、扫踢、冲膝、提膝格挡与拳腿立体连击（B03）</h2>
+    <h2>三、泰拳专项：高抱架、扫踢、正蹬、冲膝、提膝格挡与拳腿立体连击（B03）</h2>
     <div class="grid">
+      <div class="metric"><div class="label">正蹬 / Stab (Teep)</div><div class="value">{str(mt_res['teep_count']) + ' 次' if 'teep_count' in mt_res else '旧报告未统计'}</div></div>
       <div class="metric"><div class="label">泰式扫踢 (Roundhouse)</div><div class="value">{mt_res['kick_count']} 次</div></div>
       <div class="metric"><div class="label">泰拳冲膝 (Knee Strike)</div><div class="value">{mt_res['knee_count']} 次</div></div>
       <div class="metric"><div class="label">提膝格挡 (Shin Check)</div><div class="value">{mt_res['shin_check_count']} 次</div></div>
