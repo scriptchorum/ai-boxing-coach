@@ -275,7 +275,7 @@ def segment_rear_straights(
         ref_scales = [f["scale_px"] for f in reference or usable if f["scale_px"]]
         ref_hips = [f["hip_mid_px"] for f in reference or usable if f["hip_mid_px"] is not None]
         tucked = [f for f in usable if f["critical_ok"] and f["ext_ratio"] is not None
-                  and f["ext_ratio"] < min_extension_ratio and f["wr_xy"][1] < f["el_xy"][1]]
+                  and f["ext_ratio"] <= 0.65 and f["wr_xy"][1] < f["el_xy"][1]]
         first_guard = [f for f in tucked if reference_start_ms <= f["timestamp_ms"] <= reference_end_ms]
         ref_offsets = [f["offset_xy"] for f in first_guard or tucked]
 
@@ -1216,7 +1216,14 @@ def _detect_bent_arm_punches(
 
         punch_kind: str | None = None
         punch_label: str | None = None
-        if -0.25 <= el_drop_ratio <= 0.30 and abs(wr_xy[1] - sh_xy[1]) <= 0.42 * float(scale_px):
+        horiz_reach_ratio = abs(wr_xy[0] - sh_xy[0]) / float(scale_px)
+        arm_reach_ratio = math.hypot(wr_xy[0] - sh_xy[0], wr_xy[1] - sh_xy[1]) / float(scale_px)
+        if (
+            -0.25 <= el_drop_ratio <= 0.30
+            and abs(wr_xy[1] - sh_xy[1]) <= 0.42 * float(scale_px)
+            and (wr_xy[1] - sh_xy[1]) <= 0.25 * float(scale_px)
+            and (horiz_reach_ratio >= 0.25 or arm_reach_ratio >= 0.45)
+        ):
             punch_kind = f"{'lead' if hand_label == '前手' else 'rear'}_hook"
             punch_label = f"{hand_label}平勾拳 (Hook)"
         elif (el_drop_ratio > 0.30 and wr_above_el_ratio >= 0.16
@@ -1352,7 +1359,7 @@ def analyze_jab_and_one_two(
                 continue
             peak_idx = act.get("extension_frame_index")
             peak_f = feat_by_idx.get(int(peak_idx)) if peak_idx is not None else None
-            if peak_f is not None and (peak_f.get("ext_ratio") or 0.0) >= 0.78 and act.get("extension_ms") is not None:
+            if peak_f is not None and (peak_f.get("ext_ratio") or 0.0) >= 0.74 and act.get("extension_ms") is not None:
                 exclusions.append({
                     "action_id": act.get("action_id"),
                     "start_ms": float(act.get("start_ms") or act["extension_ms"]),
