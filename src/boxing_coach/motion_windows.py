@@ -12,13 +12,15 @@ def continuous(times, left, right):
 
 
 def supported_signal(values, times):
-    """A centred three-sample median, with no interpolation through missing data."""
+    """A centred three-sample median, bridging only isolated 1-frame (<=80ms) dropouts."""
     result = [None] * len(values)
     for i in range(1, len(values) - 1):
-        window = values[i - 1:i + 2]
-        if (None not in window and continuous(times, i - 1, i)
-                and continuous(times, i, i + 1)):
-            result[i] = median(window)
+        w = values[i - 1:i + 2]
+        if None not in w and continuous(times, i - 1, i) and continuous(times, i, i + 1):
+            result[i] = median(w)
+        elif w.count(None) == 1 and times[i + 1] - times[i - 1] <= 80.0:
+            valid = [v for v in w if v is not None]
+            result[i] = (valid[0] + valid[1]) / 2.0
     return result
 
 

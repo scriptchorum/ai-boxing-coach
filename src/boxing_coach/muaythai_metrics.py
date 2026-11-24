@@ -223,10 +223,10 @@ def check_muaythai_high_guard(
     }
 
 
-def _reliable_landmark(point):
+def _reliable_landmark(point, *, min_conf: float = MIN_CONFIDENCE):
     xy = get_xy(point)
-    return (xy is not None and all(0 <= v <= 1 for v in xy)
-            and all(isinstance(point.get(key), (int, float)) and MIN_CONFIDENCE <= point[key] <= 1
+    return (xy is not None and all(-0.15 <= v <= 1.15 for v in xy)
+            and all(isinstance(point.get(key), (int, float)) and min_conf <= point[key] <= 1
                     for key in ("visibility", "presence")))
 
 
@@ -241,6 +241,10 @@ def _leg_channels(points, hip, knee, ankle, support, support_ankle, aspect):
         z = point.get("z")
         return z if isinstance(z, (int, float)) and math.isfinite(z) else None
 
+    min_c = min(
+        min(float(points[idx].get("visibility") or 0.0), float(points[idx].get("presence") or 0.0))
+        for idx in (hip, knee, ankle)
+    )
     az, hz, kz = depth(a), depth(h), depth(k)
     return {
         "kx": (k["x"] - h["x"]) * aspect, "ky": k["y"] - h["y"],
@@ -251,11 +255,16 @@ def _leg_channels(points, hip, knee, ankle, support, support_ankle, aspect):
         "other_ay": (other_a["y"] - h["y"]) if other_a else None,
         "hip_width": (h["x"] - other["x"]) * aspect if other else None,
         "hip_tilt": h["y"] - other["y"] if other else None,
+        "leg_conf": min_c,
     }
 
 
-def _classify_leg(ch, start, end, scale, times, guards):
+def _classify_leg(ch, start, end, scale, times, guards, raw_confs=()):
     """Classify one completed excursion. Ambiguous extended legs stay unclassified."""
+    if raw_confs:
+        window_confs = [c for c in raw_confs[start:end + 1] if c is not None]
+        if not window_confs or max(window_confs) < MIN_CONFIDENCE:
+            return None
     kx, ky, ax, ay = (ch[k] for k in ("kx", "ky", "ax", "ay"))
     moving = range(start + 1, end)
     def shin_x(i):
@@ -343,9 +352,10 @@ def _leg_movements(rows, times, guards):
         return
     signal = [None if k is None else max(base_k - k, base_a - a, abs(x - base_x)) / scale
               for k, a, x in zip(ch["ky"], ch["ay"], ch["ax"])]
+    raw_confs = [row.get("leg_conf") for row in rows]
     last_peak = -math.inf
     for start, _, end in excursions(signal, times, 0.12, 0.18):
-        event = _classify_leg(ch, start, end, scale, times, guards)
+        event = _classify_leg(ch, start, end, scale, times, guards, raw_confs)
         if event is not None:
             kind, peak = event
             if times[peak] - last_peak >= LEG_INTERVAL_MS:
@@ -427,13 +437,14 @@ def analyze_muaythai_arsenal(
     for f in frames:
         lms = f.get("landmarks", [])
         pts = {p["index"]: p for p in lms if _reliable_landmark(p)}
+        leg_pts = {p["index"]: p for p in lms if _reliable_landmark(p, min_conf=0.40)}
         hg = check_muaythai_high_guard(list(pts.values()), stance=stance)
         guards.append(hg)
         if hg["status"] == "observed":
             upper_observed_frames += 1
             high_guard_frames += int(hg["high_guard_active"])
-        lead_rows.append(_leg_channels(pts, lead_hip_idx, lead_knee_idx, lead_ankle_idx, rear_hip_idx, rear_ankle_idx, width / height))
-        rear_rows.append(_leg_channels(pts, rear_hip_idx, rear_knee_idx, rear_ankle_idx, lead_hip_idx, lead_ankle_idx, width / height))
+        lead_rows.append(_leg_channels(leg_pts, lead_hip_idx, lead_knee_idx, lead_ankle_idx, rear_hip_idx, rear_ankle_idx, width / height))
+        rear_rows.append(_leg_channels(leg_pts, rear_hip_idx, rear_knee_idx, rear_ankle_idx, lead_hip_idx, lead_ankle_idx, width / height))
         lower_observed_frames += int(bool(lead_rows[-1] or rear_rows[-1]))
 
     total_frames = len(frames)

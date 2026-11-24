@@ -367,13 +367,32 @@ def segment_rear_straights(
             ):
                 start_pos = idx - 1
 
-        # A missing landmark or discontinuous PTS cannot establish a return.
+        # A sustained missing landmark or discontinuous PTS cannot establish a return,
+        # but brief 1-2 frame (<=100ms) confidence dips during a real punch are bridged.
         excursion_end = idx
+        last_ok_ms = float(frame_features[idx]["timestamp_ms"])
         while excursion_end < n:
             current = frame_features[excursion_end]
-            if (current["in_guard"] or not current["critical_ok"] or
-                    (excursion_end > idx and not continuous(times, excursion_end - 1, excursion_end))):
+            if excursion_end > idx and not continuous(times, excursion_end - 1, excursion_end):
                 break
+            if current["critical_ok"]:
+                last_ok_ms = float(current["timestamp_ms"])
+                if current["in_guard"]:
+                    break
+            else:
+                if float(current["timestamp_ms"]) - last_ok_ms > 100.0:
+                    break
+                # Peek ahead <= 100ms to see if tracking resumes continuously
+                resumed = False
+                for peek in range(excursion_end + 1, min(n, excursion_end + 4)):
+                    pf = frame_features[peek]
+                    if float(pf["timestamp_ms"]) - last_ok_ms > 100.0:
+                        break
+                    if pf["critical_ok"]:
+                        resumed = True
+                        break
+                if not resumed:
+                    break
             excursion_end += 1
 
         # Find maximum visible extension frame within [idx, excursion_end - 1]
@@ -450,6 +469,11 @@ def segment_rear_straights(
         else:
             reasons.append("missing_return")
             next_idx = excursion_end + 1
+            while next_idx < n:
+                nf = frame_features[next_idx]
+                if nf["in_guard"] or float(nf["timestamp_ms"]) - float(peak_feat["timestamp_ms"]) >= ARM_INTERVAL_MS:
+                    break
+                next_idx += 1
 
         if return_feat is not None and baseline_scale_px:
             floor = max(start_feat["guard_dist_px"] or 0, return_feat["guard_dist_px"])
@@ -1426,6 +1450,7 @@ def analyze_jab_and_one_two(
     def _collect_unorthodox(seg_dict: dict[str, Any], completed: Sequence[dict[str, Any]], hand_label: str) -> list[dict[str, Any]]:
         feat_by_idx = {int(f["source_frame_index"]): f for f in seg_dict.get("frame_features", [])}
         done_ids = {a.get("action_id") for a in completed}
+        done_times = [float(a["extension_ms"]) for a in completed if a.get("extension_ms") is not None]
         out: list[dict[str, Any]] = []
         last_u_ms = -1e9
         for act in seg_dict.get("actions", []):
@@ -1434,6 +1459,8 @@ def analyze_jab_and_one_two(
             peak_idx = act.get("extension_frame_index")
             ts_ms = act.get("extension_ms")
             if peak_idx is None or ts_ms is None:
+                continue
+            if any(abs(float(ts_ms) - dt) < ARM_INTERVAL_MS for dt in done_times):
                 continue
             peak_f = feat_by_idx.get(int(peak_idx))
             if peak_f is None:
@@ -1448,8 +1475,10 @@ def analyze_jab_and_one_two(
             flaw_tags: list[str] = []
             if "missing_return" in reasons:
                 flaw_tags.append("未回位")
-            if "feint_or_incomplete_extension" in reasons or elb_ang < 140.0:
+            if elb_ang < 140.0:
                 flaw_tags.append(f"肘角仅{elb_ang:.0f}°未伸直")
+            elif "feint_or_incomplete_extension" in reasons:
+                flaw_tags.append("前伸幅度偏短")
             if not flaw_tags:
                 continue
             last_u_ms = float(ts_ms)
