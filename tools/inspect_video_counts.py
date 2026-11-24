@@ -87,7 +87,7 @@ def main() -> int:
     )
 
     punches = sorted(
-        combo_res["straight_events"] + combo_res["bent_arm_punches"],
+        combo_res["straight_events"] + combo_res["bent_arm_punches"] + combo_res.get("unorthodox_punches", []),
         key=lambda e: e["timestamp_ms"],
     )
     print("\n--- 出拳明细 ---")

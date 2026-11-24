@@ -1185,11 +1185,11 @@ def _detect_bent_arm_punches(
     smooth = supported_signal(distances, times)
     detected = []
     last_peak = -math.inf
-    segmentation_signal = [m if d is not None and d <= 0.32 and m is not None and m > 0.52 else d
+    segmentation_signal = [m if d is not None and d <= 0.28 and m is not None and m > 0.42 else d
                            for d, m in zip(distances, smooth)]
-    for start, _, end in excursions(segmentation_signal, times, 0.32, 0.48):
+    for start, _, end in excursions(segmentation_signal, times, 0.28, 0.38):
         i = max(range(start + 1, end), key=distances.__getitem__)
-        if ((smooth[i] or 0) - max(distances[start], distances[end]) < 0.34
+        if ((smooth[i] or 0) - max(distances[start], distances[end]) < 0.24
                 or times[i] - last_peak < ARM_INTERVAL_MS):
             continue
         if any((times[start + 1] <= act["return_ms"] and times[end - 1] >= act["start_ms"])
@@ -1203,11 +1203,11 @@ def _detect_bent_arm_punches(
             elbow_ang is None
             or f["ext_ratio"] is None
             or not 45 <= elbow_ang <= 135
-            or not 0.55 <= f["ext_ratio"] < 0.82
+            or not 0.48 <= f["ext_ratio"] < 0.82
         ):
             continue
         elapsed = (times[i] - times[start]) / 1000
-        if elapsed < 0.04 or (distances[i] - distances[start]) / elapsed < 1.8:
+        if elapsed < 0.04 or (distances[i] - distances[start]) / elapsed < 1.3:
             continue
         scale_px = scale
         # Distinguish Hook (elbow raised near shoulder level) vs Uppercut (elbow dipped below shoulder & wrist rises)
@@ -1423,6 +1423,64 @@ def analyze_jab_and_one_two(
             + (f"、1-2-3 经典三连击 {len(one_two_three_combos)} 组。" if one_two_three_combos else "。")
         )
 
+    def _collect_unorthodox(seg_dict: dict[str, Any], completed: Sequence[dict[str, Any]], hand_label: str) -> list[dict[str, Any]]:
+        feat_by_idx = {int(f["source_frame_index"]): f for f in seg_dict.get("frame_features", [])}
+        done_ids = {a.get("action_id") for a in completed}
+        out: list[dict[str, Any]] = []
+        last_u_ms = -1e9
+        for act in seg_dict.get("actions", []):
+            if act.get("action_id") in done_ids:
+                continue
+            peak_idx = act.get("extension_frame_index")
+            ts_ms = act.get("extension_ms")
+            if peak_idx is None or ts_ms is None:
+                continue
+            peak_f = feat_by_idx.get(int(peak_idx))
+            if peak_f is None:
+                continue
+            ext_r = float(peak_f.get("ext_ratio") or 0.0)
+            elb_ang = float(peak_f.get("elbow_angle_deg") or 0.0)
+            if ext_r < 0.68 or elb_ang < 118.0:
+                continue
+            if float(ts_ms) - last_u_ms < ARM_INTERVAL_MS:
+                continue
+            reasons = act.get("quality_reasons", [])
+            flaw_tags: list[str] = []
+            if "missing_return" in reasons:
+                flaw_tags.append("未回位")
+            if "feint_or_incomplete_extension" in reasons or elb_ang < 140.0:
+                flaw_tags.append(f"肘角仅{elb_ang:.0f}°未伸直")
+            if not flaw_tags:
+                continue
+            last_u_ms = float(ts_ms)
+            out.append({
+                "punch_id": f"{act.get('action_id')}-unorthodox",
+                "punch_kind": "unorthodox_straight",
+                "punch_type": f"{hand_label}直拳（不规范：{'/'.join(flaw_tags)}）",
+                "frame_index": int(peak_idx),
+                "timestamp_ms": round(float(ts_ms), 2),
+                "elbow_angle_deg": round(elb_ang, 1),
+                "flaw_tags": flaw_tags,
+            })
+        return out
+
+    unorthodox_punches = sorted(
+        (
+            _collect_unorthodox(jab_seg, jab_actions, "前手")
+            + _collect_unorthodox(rear_seg, rear_actions, "后手")
+        )
+        if single_person_confirmed
+        else [],
+        key=lambda p: float(p["timestamp_ms"]),
+    )
+
+    if unorthodox_punches:
+        first_u = unorthodox_punches[0]
+        combo_feedback += (
+            f" 另检出 {len(unorthodox_punches)} 次不规范出拳（例如源帧 {first_u['frame_index']} 的"
+            f"{first_u['punch_type']}），建议发力时送肩推直并原路快速收拳护腮。"
+        )
+
     return {
         "jab_segmentation": jab_seg,
         "jab_metrics": jab_metrics,
@@ -1431,6 +1489,8 @@ def analyze_jab_and_one_two(
              for name, actions in (("前手刺拳", jab_actions), ("后手直拳", rear_actions)) for a in actions),
             key=lambda event: event["timestamp_ms"],
         ),
+        "unorthodox_punches": unorthodox_punches,
+        "unorthodox_count": len(unorthodox_punches),
         "jab_attempt_count": len(jab_actions),
         "jab_valid_count": jab_metrics["valid_count"],
         "jab_defense_grade": jab_metrics["defense_grade"],

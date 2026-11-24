@@ -328,10 +328,16 @@ def render_rear_straight_review_section(video, cached, mirror):
             single_person_confirmed=single_ok,
         )
         st.markdown('**🥊 全拳法协同复盘：刺拳 (Jab)、平勾 (Hook)、上勾 (Uppercut) 与 1-2 / 1-2-3 连击（B02）：**')
-        punches = sorted(combo_res["straight_events"] + combo_res["bent_arm_punches"],
-                         key=lambda event: event["timestamp_ms"])
-        st.metric("所选区间已识别的出拳", f"{len(punches)} 次")
-        st.caption("每个已回落的直拳或弯臂拳计一次。连击组共用这些拳。遮挡和未回落的动作可能漏计。")
+        punches = sorted(
+            combo_res["straight_events"] + combo_res["bent_arm_punches"] + combo_res.get("unorthodox_punches", []),
+            key=lambda event: event["timestamp_ms"],
+        )
+        u_cnt = combo_res.get("unorthodox_count", 0)
+        st.metric(
+            "所选区间已识别的出拳",
+            f"{len(punches)} 次" + (f"（含 {u_cnt} 次不规范出拳）" if u_cnt else ""),
+        )
+        st.caption("包括已回落直拳、弯臂拳（平勾/上勾）以及未伸直/未完整回防的不规范出拳；点击下方可逐拳核对与针对纠错。")
         if punches:
             with st.expander("核对每一拳的时间"):
                 st.dataframe([{"时间 (秒)": round(e["timestamp_ms"]/1000, 2),

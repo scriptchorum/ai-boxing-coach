@@ -278,15 +278,12 @@ def _classify_leg(ch, start, end, scale, times, guards):
     # so stepping, pivoting, stance-switching, and upward-tilt depth noise never trigger false kicks.
     ankle_lift = ay[start] - ay[foot]
     other_ay_foot = ch["other_ay"][foot]
-    standing_clearance = other_ay_foot - ay[foot] if other_ay_foot is not None else 0.0
+    depth_sweep = (depth_observed and None not in ch["shin_z"][start:foot + 1]
+                   and abs(ch["az"][foot] - zs[0]) >= 0.20 * scale
+                   and abs(ch["shin_z"][foot] - ch["shin_z"][start]) >= 0.15 * scale)
+    standing_clearance = other_ay_foot - ay[foot] if other_ay_foot is not None else (0.0 if depth_sweep else ankle_lift)
     foot_clearly_airborne = ankle_lift >= 0.30 * scale and standing_clearance >= 0.28 * scale
 
-    # During a step the knee and ankle can travel in depth together.
-    # A depth-only sweep also needs independent motion of the distal shin.
-    shin_z = ch["shin_z"][start:foot + 1]
-    depth_sweep = (depth_observed and None not in shin_z
-                   and abs(ch["az"][foot] - zs[0]) >= 0.20 * scale
-                   and abs(shin_z[-1] - shin_z[0]) >= 0.15 * scale)
     reaches_out = shin_x(foot) >= 0.28 * scale and shin_x(foot) - shin_x(start) >= 0.20 * scale
     if (reaches_out or depth_sweep) and foot_clearly_airborne:
         # Compare the pelvis with its own pre-lift pose. Side-on hip widths can approach zero.
@@ -313,9 +310,9 @@ def _classify_leg(ch, start, end, scale, times, guards):
         shin = math.hypot(ax[foot] - kx[foot], ay[foot] - ky[foot])
         extension = math.hypot(ax[foot], ay[foot]) / max(thigh + shin, 1e-6)
         path_length = sum(math.hypot(ax[i] - ax[i-1], ay[i] - ay[i-1]) for i in range(origin+1, foot+1))
-        if (turn <= 0.08 and extension >= 0.84 and chord >= 0.92 * path_length
+        if (turn <= 0.11 and extension >= 0.80 and chord >= 0.90 * path_length
                 and chamber is not None and times[foot] - times[chamber] >= 40
-                and abs(dx) >= 0.22 * scale and bend <= 0.09 and not depth_sweep):
+                and abs(dx) >= 0.20 * scale and bend <= 0.11 and not depth_sweep):
             return "teep_kick", foot
         return None
 
