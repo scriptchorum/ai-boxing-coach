@@ -406,6 +406,68 @@ def _foot_placements(left, right, times):
     return contacts
 
 
+def _recover_edge_clipped_kicks(rows, times, guards, covered_times_by_side, side_label):
+    """Recover genuine airborne kicks/teeps whose retraction clipped the narrow frame edge."""
+    valid_standing = [r["ay"] for r in rows if r and r.get("ay") is not None and r.get("other_ay") is not None and abs(r["ay"] - r["other_ay"]) <= 0.15]
+    if not valid_standing:
+        return []
+    scale = median(math.hypot(r["ax"], r["ay"]) for r in rows if r and r.get("ax") is not None and r.get("ay") is not None and r in [x for x in rows if x] and abs(r["ay"] - (r["other_ay"] or r["ay"])) <= 0.15) if valid_standing else 0.0
+    if scale <= 1e-4:
+        return []
+
+    airborne = []
+    for i, r in enumerate(rows):
+        if not r or r.get("other_ay") is None or r.get("ay") is None:
+            continue
+        clr = (r["other_ay"] - r["ay"]) / scale
+        if clr >= 0.34:
+            airborne.append((i, clr, r))
+    if not airborne:
+        return []
+
+    clusters = []
+    for item in airborne:
+        i = item[0]
+        if clusters and times[i] - times[clusters[-1][-1][0]] <= 250.0:
+            clusters[-1].append(item)
+        else:
+            clusters.append([item])
+
+    recovered = []
+    for cl in clusters:
+        if len(cl) < 3 or times[cl[-1][0]] - times[cl[0][0]] < 80.0:
+            continue
+        if max(r["leg_conf"] for _, _, r in cl) < MIN_CONFIDENCE:
+            continue
+        peak_i, peak_clr, peak_r = max(cl, key=lambda x: x[1])
+        if any(abs(times[peak_i] - ct) < LEG_INTERVAL_MS for ct in covered_times_by_side):
+            continue
+        # Must have grounded or transitional context before and after (not static high foot / no return)
+        pre_ok = any(rows[j] and rows[j].get("other_ay") is not None and (rows[j]["other_ay"] - rows[j]["ay"]) / scale <= 0.25
+                     for j in range(max(0, cl[0][0] - 15), cl[0][0]))
+        post_ok = any(rows[j] and rows[j].get("other_ay") is not None and (rows[j]["other_ay"] - rows[j]["ay"]) / scale <= 0.25
+                      for j in range(cl[-1][0] + 1, min(len(rows), cl[-1][0] + 30)))
+        if not (pre_ok and post_ok):
+            continue
+        # Reject single-frame teleportation with zero progressive rise and zero hip turn
+        has_gradual_rise = any(
+            rows[j] and rows[j].get("other_ay") is not None and 0.12 <= (rows[j]["other_ay"] - rows[j]["ay"]) / scale < peak_clr - 0.08
+            for j in range(max(0, cl[0][0] - 5), peak_i)
+        )
+        base_hw = [rows[j]["hip_width"] for j in range(max(0, cl[0][0] - 5), cl[0][0]) if rows[j] and rows[j].get("hip_width") is not None]
+        base_ht = [rows[j]["hip_tilt"] for j in range(max(0, cl[0][0] - 5), cl[0][0]) if rows[j] and rows[j].get("hip_tilt") is not None]
+        turn = (abs(peak_r["hip_width"] - base_hw[0]) / scale) if (base_hw and peak_r.get("hip_width") is not None) else 0.0
+        tilt_turn = (abs(peak_r["hip_tilt"] - base_ht[0]) / scale) if (base_ht and peak_r.get("hip_tilt") is not None) else 0.0
+        if not has_gradual_rise and turn < 0.03:
+            continue
+        shin_x_peak = abs(peak_r["ax"] - peak_r["kx"])
+        horiz_shin = shin_x_peak >= abs(peak_r["ay"] - peak_r["ky"])
+        kind = "roundhouse_kick" if (tilt_turn >= 0.14 and horiz_shin and shin_x_peak >= 0.25 * scale) else "teep_kick"
+        recovered.append((kind, cl[0][0], peak_i, min(len(rows) - 1, cl[-1][0] + 1)))
+        covered_times_by_side.append(times[peak_i])
+    return recovered
+
+
 def analyze_muaythai_arsenal(
     frames: Sequence[dict[str, Any]],
     *,
@@ -475,6 +537,10 @@ def analyze_muaythai_arsenal(
                                     "start_ms": times[start], "return_ms": times[end]})
         movements = [(peak, side, kind, start, end) for side, rows in (("前", lead_rows), ("后", rear_rows))
                      for kind, start, peak, end in _leg_movements(rows, times, guards)]
+        for side, rows in (("前", lead_rows), ("后", rear_rows)):
+            covered = [times[pk] for pk, sd, _, _, _ in movements if sd == side]
+            for kind, start, peak, end in _recover_edge_clipped_kicks(rows, times, guards, covered, side):
+                movements.append((peak, side, kind, start, end))
         for peak, side, kind, start, end in sorted(movements):
             if any(first < peak <= landing and landing <= end for first, landing, _, _ in contacts):
                 continue
