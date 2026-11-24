@@ -1449,6 +1449,7 @@ def analyze_jab_and_one_two(
 
     def _collect_unorthodox(seg_dict: dict[str, Any], completed: Sequence[dict[str, Any]], hand_label: str) -> list[dict[str, Any]]:
         feat_by_idx = {int(f["source_frame_index"]): f for f in seg_dict.get("frame_features", [])}
+        scale_px = float(seg_dict.get("metric_config", {}).get("scale_px") or 0.0)
         done_ids = {a.get("action_id") for a in completed}
         done_times = [float(a["extension_ms"]) for a in completed if a.get("extension_ms") is not None]
         out: list[dict[str, Any]] = []
@@ -1456,6 +1457,7 @@ def analyze_jab_and_one_two(
         for act in seg_dict.get("actions", []):
             if act.get("action_id") in done_ids:
                 continue
+            start_idx = act.get("start_frame_index")
             peak_idx = act.get("extension_frame_index")
             ts_ms = act.get("extension_ms")
             if peak_idx is None or ts_ms is None:
@@ -1463,12 +1465,21 @@ def analyze_jab_and_one_two(
             if any(abs(float(ts_ms) - dt) < ARM_INTERVAL_MS for dt in done_times):
                 continue
             peak_f = feat_by_idx.get(int(peak_idx))
+            start_f = feat_by_idx.get(int(start_idx)) if start_idx is not None else None
             if peak_f is None:
                 continue
             ext_r = float(peak_f.get("ext_ratio") or 0.0)
             elb_ang = float(peak_f.get("elbow_angle_deg") or 0.0)
-            if ext_r < 0.68 or elb_ang < 118.0:
+            if ext_r < 0.72 or elb_ang < 125.0:
                 continue
+            # Require genuine excursion away from start guard position (suppress guard-drift noise)
+            if scale_px > 1e-3 and start_f is not None:
+                s_dist = float(start_f.get("guard_dist_px") or 0.0)
+                p_dist = float(peak_f.get("guard_dist_px") or 0.0)
+                if p_dist - s_dist < 0.32 * scale_px:
+                    continue
+                if not start_f.get("in_guard") and (peak_f.get("reach_px") or 0.0) < 0.72 * scale_px:
+                    continue
             if float(ts_ms) - last_u_ms < ARM_INTERVAL_MS:
                 continue
             reasons = act.get("quality_reasons", [])
@@ -1493,7 +1504,7 @@ def analyze_jab_and_one_two(
             })
         return out
 
-    unorthodox_punches = sorted(
+    raw_unorthodox = sorted(
         (
             _collect_unorthodox(jab_seg, jab_actions, "前手")
             + _collect_unorthodox(rear_seg, rear_actions, "后手")
@@ -1502,6 +1513,20 @@ def analyze_jab_and_one_two(
         else [],
         key=lambda p: float(p["timestamp_ms"]),
     )
+    # Suppress cross-hand simultaneous ghost triggers (<120ms from any real straight or prior unorthodox punch)
+    real_straight_times = [
+        float(a["extension_ms"])
+        for a in (jab_actions + rear_actions)
+        if a.get("extension_ms") is not None
+    ]
+    unorthodox_punches: list[dict[str, Any]] = []
+    for up in raw_unorthodox:
+        t_ms = float(up["timestamp_ms"])
+        if any(abs(t_ms - rt) < 120.0 for rt in real_straight_times):
+            continue
+        if any(abs(t_ms - float(kept["timestamp_ms"])) < 120.0 for kept in unorthodox_punches):
+            continue
+        unorthodox_punches.append(up)
 
     if unorthodox_punches:
         first_u = unorthodox_punches[0]
