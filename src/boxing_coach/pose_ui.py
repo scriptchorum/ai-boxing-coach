@@ -28,6 +28,7 @@ from .rear_straight_review import (
     apply_action_override,
     build_history_entry,
     compare_same_condition_history,
+    count_recognized_punches,
     compute_rear_straight_metrics,
     export_review_annotation_json,
     segment_rear_straights,
@@ -238,10 +239,17 @@ def render_rear_straight_review_section(video, cached, mirror):
         stance = 'orthodox' if 'Orthodox' in stance_opt else 'southpaw'
         view_opt = c2.selectbox('机位记录', ['侧面 (side)', '前斜 45° (front_45)'], key='rs_view_select')
         view = 'side' if 'side' in view_opt else 'front_45'
+        video_key = getattr(video.inspection, 'input_sha256', video.path.name)
+        has_multi_person = any(
+            int(f.get('subject_count', 1)) > 1 or bool(f.get('impostor_rejected'))
+            for f in cached.frames
+        )
+        if has_multi_person:
+            st.warning('检测到背景人物或多人入镜，已默认取消“单人确认”，请核实后再手动勾选。')
         single_ok = st.checkbox(
             '确认当前片段为单人训练（启用回防评分、回手时间与重复性统计）',
-            value=True,
-            key='rs_single_person_confirmed',
+            value=(not has_multi_person),
+            key=f'rs_single_person_confirmed_{video_key}',
         )
 
         width = getattr(video.inspection, 'width', 1280)
@@ -335,7 +343,7 @@ def render_rear_straight_review_section(video, cached, mirror):
         u_cnt = combo_res.get("unorthodox_count", 0)
         st.metric(
             "所选区间已识别的出拳",
-            f"{len(punches)} 次" + (f"（含 {u_cnt} 次不规范出拳）" if u_cnt else ""),
+            f"{count_recognized_punches(combo_res)} 次" + (f"（含 {u_cnt} 次不规范出拳）" if u_cnt else ""),
         )
         st.caption("包括已回落直拳、弯臂拳（平勾/上勾）以及未伸直/未完整回防的不规范出拳；点击下方可逐拳核对与针对纠错。")
         if punches:

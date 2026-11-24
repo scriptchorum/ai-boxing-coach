@@ -91,6 +91,14 @@ class MuayThaiMetricsTests(unittest.TestCase):
         self.assertEqual(res_turned['status'], 'observed')
         self.assertNotEqual(res_turned['angle_degrees'], 0.0)
 
+        # Portrait 720x1280 aspect ratio test: equal normalized dx=0.1, dy=0.1 must yield 60.64 deg (not 45.00)
+        diag_pose = [
+            point(23, 0.40, 0.50),
+            point(24, 0.50, 0.60),
+        ]
+        portrait_res = compute_hip_rotation_angle(diag_pose, width=720, height=1280)
+        self.assertAlmostEqual(portrait_res['angle_degrees'], 60.64, places=2)
+
     def test_lead_arm_extension_ratio(self):
         # Full lockout jab: shoulder(0.4, 0.3) -> elbow(0.4, 0.45) -> wrist(0.4, 0.6)
         lockout = [

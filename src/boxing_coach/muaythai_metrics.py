@@ -108,8 +108,13 @@ def check_rear_guard(
     }
 
 
-def compute_hip_rotation_angle(landmarks: Sequence[dict]) -> dict[str, Any]:
-    """Compute the angle of the hip line (left_hip -> right_hip) in degrees.
+def compute_hip_rotation_angle(
+    landmarks: Sequence[dict],
+    *,
+    width: int = 1280,
+    height: int = 720,
+) -> dict[str, Any]:
+    """Compute the angle of the hip line (left_hip -> right_hip) in degrees using pixel aspect ratio.
 
     Returns:
         dict with:
@@ -124,10 +129,12 @@ def compute_hip_rotation_angle(landmarks: Sequence[dict]) -> dict[str, Any]:
     if not l_hip or not r_hip:
         return {'angle_degrees': None, 'hip_width_normalized': None, 'status': 'unobservable'}
 
-    dx = r_hip[0] - l_hip[0]
-    dy = r_hip[1] - l_hip[1]
-    dist = math.hypot(dx, dy)
-    angle_rad = math.atan2(dy, dx)
+    dx_norm = r_hip[0] - l_hip[0]
+    dy_norm = r_hip[1] - l_hip[1]
+    dist = math.hypot(dx_norm, dy_norm)
+    dx_px = dx_norm * float(width)
+    dy_px = dy_norm * float(height)
+    angle_rad = math.atan2(dy_px, dx_px)
     angle_deg = math.degrees(angle_rad)
 
     return {

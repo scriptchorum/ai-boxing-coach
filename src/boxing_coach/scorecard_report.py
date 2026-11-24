@@ -16,6 +16,7 @@ from .rear_straight_review import (
     analyze_jab_and_one_two,
     build_history_entry,
     compute_rear_straight_metrics,
+    count_recognized_punches,
     segment_rear_straights,
 )
 
@@ -31,8 +32,15 @@ def summarize_frames_for_batch(
     view: str = "side",
     mirror: bool = False,
     model_id: str = "mediapipe_pose_landmarker_lite",
+    single_person_confirmed: bool | None = None,
 ) -> dict[str, Any]:
     """Compute a complete single-clip summary row and history entry from extracted pose frames."""
+    has_multi_person = any(
+        int(f.get("subject_count", 1)) > 1 or bool(f.get("impostor_rejected"))
+        for f in frames
+    )
+    effective_single_ok = (not has_multi_person) if single_person_confirmed is None else bool(single_person_confirmed)
+
     seg = segment_rear_straights(
         frames,
         width=width,
@@ -40,7 +48,7 @@ def summarize_frames_for_batch(
         stance=stance,
         sample_id=entry_id,
     )
-    rear_metrics = compute_rear_straight_metrics(seg, single_person_confirmed=True)
+    rear_metrics = compute_rear_straight_metrics(seg, single_person_confirmed=effective_single_ok)
     combo_res = analyze_jab_and_one_two(
         frames,
         rear_segmentation=seg,
@@ -48,12 +56,12 @@ def summarize_frames_for_batch(
         height=height,
         stance=stance,
         sample_id=entry_id,
-        single_person_confirmed=True,
+        single_person_confirmed=effective_single_ok,
     )
     mt_res = analyze_muaythai_arsenal(
         frames, width=width, height=height,
         punch_events=combo_res["straight_events"], stance=stance,
-        single_person_confirmed=True,
+        single_person_confirmed=effective_single_ok,
     )
     hist_entry = build_history_entry(
         rear_metrics,
@@ -73,7 +81,7 @@ def summarize_frames_for_batch(
             if hist_entry.get("median_return_time_ms") is not None
             else "-"
         ),
-        "已识别出拳": len(combo_res["straight_events"]) + len(combo_res["bent_arm_punches"]),
+        "已识别出拳": count_recognized_punches(combo_res),
         "步伐 / 换架": f"{mt_res['step_count']} / {mt_res['stance_switch_count']}",
         "刺拳 / 平勾 / 上勾": (
             f"{combo_res['jab_attempt_count']} / {combo_res['hook_count']} / {combo_res['uppercut_count']}"
@@ -356,7 +364,7 @@ def build_standalone_scorecard_html(
   <div class="card">
     <h2>二、全拳法统计：刺拳、平勾拳、上勾拳与 1-2 / 1-2-3 连击（B02）</h2>
     <div class="grid">
-      <div class="metric"><div class="label">所选区间已识别的出拳</div><div class="value">{len(combo_res['straight_events']) + len(combo_res['bent_arm_punches']) if 'straight_events' in combo_res and 'bent_arm_punches' in combo_res else '—'} 次</div></div>
+      <div class="metric"><div class="label">所选区间已识别的出拳</div><div class="value">{count_recognized_punches(combo_res) if 'straight_events' in combo_res and 'bent_arm_punches' in combo_res else '—'} 次</div></div>
       <div class="metric"><div class="label">前手刺拳 (Jab)</div><div class="value">{combo_res['jab_attempt_count']} 次（完整 {combo_res['jab_valid_count']}）</div></div>
       <div class="metric"><div class="label">前手刺拳回防评分</div><div class="value">{esc(str(combo_res['jab_defense_grade']))}</div></div>
       <div class="metric"><div class="label">平勾拳 / 上勾拳</div><div class="value">{combo_res.get('hook_count', 0)} 次 / {combo_res.get('uppercut_count', 0)} 次</div></div>

@@ -726,6 +726,7 @@ def compute_rear_straight_metrics(
     valid_return_times: list[float] = []
     valid_action_ids: list[str] = []
     repeatability_evidence: list[dict[str, Any]] = []
+    clip_end_ms = max((float(f["timestamp_ms"]) for f in segmentation.get("frame_features", [])), default=None)
 
     for a in actions:
         ext_idx = a["extension_frame_index"]
@@ -786,6 +787,14 @@ def compute_rear_straight_metrics(
             ev_items = []
 
         reasons = list(a["quality_reasons"])
+        if (
+            "missing_return" in reasons
+            and a.get("extension_ms") is not None
+            and clip_end_ms is not None
+            and (clip_end_ms - float(a["extension_ms"])) <= 600.0
+            and "return_pending_truncation" not in reasons
+        ):
+            reasons.append("return_pending_truncation")
         if not single_person_confirmed and "single_person_unconfirmed" not in reasons:
             reasons.append("single_person_unconfirmed")
 
@@ -924,14 +933,35 @@ def _build_defense_score_and_top_advice(
             },
         }
 
+    scored_attempts = [
+        m for m in real_attempts
+        if "return_pending_truncation" not in m.get("quality_reasons", [])
+    ]
+    truncated_attempts = [
+        m for m in real_attempts
+        if "return_pending_truncation" in m.get("quality_reasons", [])
+    ]
+    if not scored_attempts and truncated_attempts:
+        return {
+            "defense_score": None,
+            "defense_grade": "回程待观察（选段末尾截断）",
+            "top_priority_advice": (
+                "本段末尾的出拳恰好被录像或选段截断，尚未拍到收拳回位阶段，暂不出具评级；"
+                "建议将选段向后延长 0.5 秒以上，待看到完整回防后再评分。"
+            ),
+            "top_priority_frame_index": truncated_attempts[-1]["extension_frame_index"],
+            "drill_prescription": None,
+        }
+
+    eval_attempts = scored_attempts or real_attempts
     valid_count = len(valid_return_times)
     partial_returned_times = [
         float(m["return_time_ms"])
-        for m in real_attempts
+        for m in eval_attempts
         if m.get("return_time_ms") is not None
     ]
     partial_return_count = max(0, len(partial_returned_times) - valid_count)
-    completion_ratio = (valid_count + 0.65 * partial_return_count) / len(real_attempts)
+    completion_ratio = (valid_count + 0.65 * partial_return_count) / len(eval_attempts)
 
     # 1. Completion component (up to 60 points)
     completion_pts = 60.0 * min(1.0, completion_ratio)
@@ -1269,6 +1299,15 @@ def _detect_bent_arm_punches(
                 }
             )
     return detected
+
+
+def count_recognized_punches(combo_res: dict[str, Any]) -> int:
+    """Single source of truth for recognized punch count across UI, batch table, and HTML scorecard."""
+    return (
+        len(combo_res.get("straight_events", []))
+        + len(combo_res.get("bent_arm_punches", []))
+        + len(combo_res.get("unorthodox_punches", []))
+    )
 
 
 def analyze_jab_and_one_two(

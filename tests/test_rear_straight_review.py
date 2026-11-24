@@ -425,6 +425,18 @@ class RearStraightReviewTests(unittest.TestCase):
         self.assertIn("1-2-3 连击", html_text)
         self.assertNotIn("<script", html_text.lower())
 
+    def test_clip_end_truncated_punch_reports_pending_observation_instead_of_grade_d(self):
+        frames = [_make_frame(i, i * 40.0) for i in range(10)]
+        frames.append(_make_frame(10, 400.0, right_elbow_x=0.50, right_wrist_x=0.60))
+        frames.append(_make_frame(11, 440.0, right_elbow_x=0.54, right_wrist_x=0.68))
+        frames.append(_make_frame(12, 480.0, right_elbow_x=0.58, right_wrist_x=0.76))
+        frames.append(_make_frame(13, 520.0, right_elbow_x=0.56, right_wrist_x=0.72))
+
+        seg = segment_rear_straights(frames, width=1280, height=720, stance="orthodox")
+        metrics = compute_rear_straight_metrics(seg, single_person_confirmed=True)
+        self.assertIsNone(metrics["defense_score"])
+        self.assertIn("回程待观察", metrics["defense_grade"])
+
 
 if __name__ == "__main__":
     unittest.main()

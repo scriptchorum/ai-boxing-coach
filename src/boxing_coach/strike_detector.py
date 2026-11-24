@@ -81,7 +81,9 @@ class StrikeAuditor:
                 "rear_guard_safe": guard["rear_guard_safe"],
                 "rear_guard_dropped": guard["rear_guard_safe"] is False,
                 "rear_guard_drop_distance": guard["drop_distance"],
-                "hip_rotation_deg": compute_hip_rotation_angle(landmarks)["angle_degrees"],
+                "hip_rotation_deg": compute_hip_rotation_angle(
+                    landmarks, width=self.width, height=self.height
+                )["angle_degrees"],
             })
         # Aggregate statistics
         total_strikes = len(all_strikes)
@@ -99,7 +101,7 @@ class StrikeAuditor:
         else:
             if guard_drop_rate > 0.35:
                 feedback.append(
-                    f"防守警告：在 {guard_drops}/{total_strikes} 次击打中（{guard_drop_rate*100:.1f}%），"
+                    f"防守警告：在 {guard_drops}/{total_strikes} 个峰值帧中（{guard_drop_rate*100:.1f}%），"
                     "后手明显掉出下巴防守区，实战中极易遭到对手迎击勾拳！出拳时请务必将后手紧贴下颌骨。"
                 )
             else:

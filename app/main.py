@@ -5,6 +5,7 @@ from __future__ import annotations
 import pathlib
 import subprocess
 import sys
+import uuid
 
 import streamlit as st
 from boxing_coach.preview import load_preview, read_preview_frame, selection_times
@@ -65,9 +66,25 @@ def _pick_video_via_dialog() -> str:
 def _save_uploaded_video(uploaded_file) -> pathlib.Path:
     upload_dir = pathlib.Path(__file__).resolve().parents[1] / "work" / "ui_uploads"
     upload_dir.mkdir(parents=True, exist_ok=True)
-    target = upload_dir / pathlib.Path(uploaded_file.name).name
+    safe_name = pathlib.Path(uploaded_file.name).name
+    target = upload_dir / f"{uuid.uuid4().hex[:8]}_{safe_name}"
     target.write_bytes(uploaded_file.getbuffer())
     return target
+
+
+def _is_mobile_isolated_mode() -> bool:
+    """Enable isolated upload-only mode for mobile/LAN clients (?mobile=1 or non-localhost)."""
+    if st.query_params.get("mobile") == "1":
+        return True
+    try:
+        headers = getattr(st, "context", None) and getattr(st.context, "headers", None)
+        if headers:
+            host = str(headers.get("Host", "")).split(":")[0].lower()
+            if host and host not in ("127.0.0.1", "localhost", "::1"):
+                return True
+    except Exception:
+        pass
+    return False
 
 
 def clear_video() -> None:
@@ -105,31 +122,41 @@ st.caption("以女性身体多样性为核心 · 一站式本地自动复盘版"
 st.markdown('**极简流程：直接从列表点选 / 弹窗选择 / 拖拽视频 → 点击【🚀 一键打开并直接生成动作复盘】→ 立即查看全套复盘报告。**')
 st.info("视频仅在本机读取和分析，不上传云端，也不修改原片。若视频超过 30 秒，一键复盘会自动截取前 30 秒合规区间直接出分。")
 
-discovered_videos = _discover_local_videos()
-pick_col1, pick_col2, pick_col3 = st.columns([3, 1.2, 1.8])
-selected_from_list = None
-if discovered_videos:
-    selected_from_list = pick_col1.selectbox(
-        "📋 已自动发现训练视频（网盘 AI coach / 桌面 / 下载 / 视频目录，按最新排序）",
-        options=[None] + discovered_videos,
-        format_func=lambda p: "—— 请点此下拉直接选一条视频 ——" if p is None else f"{p.name}  ({p.parent.name})",
-        key="quick_video_select",
+mobile_isolated = _is_mobile_isolated_mode()
+if mobile_isolated:
+    st.caption("📱 手机/局域网独立上传模式：仅显示上传入口，不暴露电脑本地文件夹。")
+    uploaded_vid = st.file_uploader(
+        "📱 从手机相册选择或现拍上传训练视频",
+        type=[ext.lstrip(".") for ext in sorted(SUPPORTED_EXTENSIONS)],
+        key="drag_drop_uploader",
     )
+    selected_from_list = None
 else:
-    pick_col1.caption("未在默认目录发现视频，请使用右侧【弹窗浏览】或【拖拽上传】。")
+    discovered_videos = _discover_local_videos()
+    pick_col1, pick_col2, pick_col3 = st.columns([3, 1.2, 1.8])
+    selected_from_list = None
+    if discovered_videos:
+        selected_from_list = pick_col1.selectbox(
+            "📋 已自动发现训练视频（网盘 AI coach / 桌面 / 下载 / 视频目录，按最新排序）",
+            options=[None] + discovered_videos,
+            format_func=lambda p: "—— 请点此下拉直接选一条视频 ——" if p is None else f"{p.name}  ({p.parent.name})",
+            key="quick_video_select",
+        )
+    else:
+        pick_col1.caption("未在默认目录发现视频，请使用右侧【弹窗浏览】或【拖拽上传】。")
 
-if pick_col2.button("📂 弹窗浏览本地文件", use_container_width=True, key="browse_dialog_btn"):
-    chosen_path = _pick_video_via_dialog()
-    if chosen_path:
-        st.session_state.input_path = chosen_path
-        st.rerun()
+    if pick_col2.button("📂 弹窗浏览本地文件", use_container_width=True, key="browse_dialog_btn"):
+        chosen_path = _pick_video_via_dialog()
+        if chosen_path:
+            st.session_state.input_path = chosen_path
+            st.rerun()
 
-uploaded_vid = pick_col3.file_uploader(
-    "🖱️ 或直接把视频拖到这里",
-    type=[ext.lstrip(".") for ext in sorted(SUPPORTED_EXTENSIONS)],
-    key="drag_drop_uploader",
-    label_visibility="collapsed",
-)
+    uploaded_vid = pick_col3.file_uploader(
+        "🖱️ 或直接把视频拖到这里",
+        type=[ext.lstrip(".") for ext in sorted(SUPPORTED_EXTENSIONS)],
+        key="drag_drop_uploader",
+        label_visibility="collapsed",
+    )
 
 if selected_from_list is not None and st.button(
     f"🚀 一键打开并复盘所选视频：{selected_from_list.name}",
@@ -168,25 +195,26 @@ if uploaded_vid is not None and st.button(
     except (MediaInputError, ValueError, OSError) as exc:
         st.error(f"无法打开拖入视频：{exc}")
 
-with st.form("open_video"):
-    path = st.text_input("或手动粘贴本机视频路径（可选）", placeholder='粘贴完整文件路径（可带双引号），回车即可一键打开并分析', key="input_path")
-    btn_c1, btn_c2 = st.columns([2, 1])
-    submitted_auto = btn_c1.form_submit_button("🚀 一键打开并直接生成动作复盘", type="primary")
-    submitted_open = btn_c2.form_submit_button("打开视频")
-if submitted_auto or submitted_open:
-    clear_video()
-    try:
-        with st.spinner("检查完整视频与时间轴…"):
-            loaded = load_preview(path, allow_extended_formats=bool(submitted_auto))
-            st.session_state.video = loaded
-            if submitted_auto:
-                st.session_state.start_frame = 0
-                st.session_state.end_frame = _auto_clamped_end_frame(loaded.inspection, 0)
-                st.session_state.auto_run_pose = True
-    except MediaInputError as exc:
-        st.error(f"无法打开视频 [{exc.code}]：{exc}")
-    except (ValueError, OSError):
-        st.error("路径无法读取，请重新复制文件路径。")
+if not mobile_isolated:
+    with st.form("open_video"):
+        path = st.text_input("或手动粘贴本机视频路径（可选）", placeholder='粘贴完整文件路径（可带双引号），回车即可一键打开并分析', key="input_path")
+        btn_c1, btn_c2 = st.columns([2, 1])
+        submitted_auto = btn_c1.form_submit_button("🚀 一键打开并直接生成动作复盘", type="primary")
+        submitted_open = btn_c2.form_submit_button("打开视频")
+    if submitted_auto or submitted_open:
+        clear_video()
+        try:
+            with st.spinner("检查完整视频与时间轴…"):
+                loaded = load_preview(path, allow_extended_formats=bool(submitted_auto))
+                st.session_state.video = loaded
+                if submitted_auto:
+                    st.session_state.start_frame = 0
+                    st.session_state.end_frame = _auto_clamped_end_frame(loaded.inspection, 0)
+                    st.session_state.auto_run_pose = True
+        except MediaInputError as exc:
+            st.error(f"无法打开视频 [{exc.code}]：{exc}")
+        except (ValueError, OSError):
+            st.error("路径无法读取，请重新复制文件路径。")
 
 video = st.session_state.get("video")
 if video is None:
@@ -200,13 +228,16 @@ top_bar1.success(f"当前视频：{video.path.name}（{inspection.width}×{inspe
 mirror = top_bar2.checkbox("拍摄时开启了镜像保存：纠正右侧画面", value=False, key="mirror")
 top_bar3.button("关闭当前视频", on_click=clear_video)
 
-# Quick switcher for sibling video files in the same directory
-try:
-    sibling_mp4s = sorted(
-        p for p in video.path.parent.iterdir()
-        if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS
-    )
-except OSError:
+# Quick switcher for sibling video files in the same directory (disabled in mobile-isolated mode)
+if not mobile_isolated:
+    try:
+        sibling_mp4s = sorted(
+            p for p in video.path.parent.iterdir()
+            if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS
+        )
+    except OSError:
+        sibling_mp4s = []
+else:
     sibling_mp4s = []
 if len(sibling_mp4s) > 1:
     with st.expander(f"📂 同文件夹下发现 {len(sibling_mp4s)} 个训练视频（点击可一键切换并直接复盘）", expanded=False):
